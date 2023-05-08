@@ -58,7 +58,7 @@ def get_config(config: dict = {}) -> dict:
     ):
         if config and set(REQUIRED_KEYS).issubset(config.keys()):
             break
-        config = cfg_fn() | config
+        config = {**cfg_fn(), **config}
 
     return config
 
