@@ -1,0 +1,7 @@
+click
+jira
+pytest
+pytest-cov
+pytest-mock
+python-dotenv
+tabulate
