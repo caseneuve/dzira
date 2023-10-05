@@ -112,8 +112,8 @@ def add_worklog(
         issue=issue, timeSpent=time, timeSpentSeconds=seconds, comment=comment
     )
     print(
-        f"Spent {work_log.raw['timeSpent']} in {issue} "
-        f"({work_log.issueId}) [worklog {work_log.id}]"
+        f"{datetime.now():%H:%M:%S}  Spent {work_log.raw['timeSpent']} in {issue} "
+        f"[worklog {work_log.id}]"
     )
 
 
