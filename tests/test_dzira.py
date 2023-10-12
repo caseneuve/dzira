@@ -260,7 +260,7 @@ class TestGetWorklog:
     def test_returns_worklog_if_found_by_jira_with_given_specs(self):
         mock_jira = Mock(worklog=Mock())
 
-        result = get_worklog(mock_jira, "123", 999)
+        result = get_worklog(mock_jira, issue="123", worklog_id=999)
 
         assert result == mock_jira.worklog.return_value
         mock_jira.worklog.assert_called_once_with(issue="123", id="999")
@@ -269,7 +269,7 @@ class TestGetWorklog:
         mock_jira = Mock(worklog=Mock(return_value=None))
 
         with pytest.raises(Exception) as exc_info:
-            get_worklog(mock_jira, "123", "999")
+            get_worklog(mock_jira, issue="123", worklog_id="999")
 
         assert "could not find worklog 999 for issue '123'" in str(exc_info)
 
@@ -299,7 +299,7 @@ class TestCalculateSeconds:
         mock_datetime = mocker.patch("dzira.dzira.datetime")
         mock_datetime.strptime.return_value.__gt__ = Mock(return_value=False)
 
-        calculate_seconds(start="9.00")
+        calculate_seconds(start="9.00", end=None)
 
         mock_datetime.now.assert_called()
         mock_datetime.strptime.return_value.__gt__.assert_called_once_with(
@@ -315,14 +315,14 @@ class TestCalculateSeconds:
         ],
     )
     def test_returns_seconds_delta_of_end_and_start(self, start, end, expected):
-        assert calculate_seconds(start, end) == expected
+        assert calculate_seconds(start=start, end=end) == expected
 
     def test_accepts_multiple_separators_in_input(self, mocker):
         mock_sub = mocker.patch("dzira.dzira.re.sub")
         mock_datetime = mocker.patch("dzira.dzira.datetime")
         mock_datetime.strptime.return_value.__gt__ = Mock(return_value=False)
 
-        calculate_seconds("2,10", "3.01")
+        calculate_seconds(start="2,10", end="3.01")
 
         mock_sub.assert_has_calls(
             [call("[,.h]", ":", "3.01"), call("[,.h]", ":", "2,10")]
@@ -337,7 +337,7 @@ class TestCalculateSeconds:
         mock_datetime.strptime.return_value.__gt__ = Mock(return_value=True)
 
         with pytest.raises(click.BadParameter) as exc_info:
-            calculate_seconds("18h00", "8h00")
+            calculate_seconds(start="18h00", end="8h00")
 
         assert "start time cannot be later than end time" in str(exc_info.value)
 
@@ -536,23 +536,28 @@ class TestValidateHour:
 
 
 class TestPreparePaload:
+    args = dict(
+        time=None, start=sentinel.start, end=sentinel.end, comment=sentinel.comment, worklog_id=None
+    )
+
     def test_uses_time_and_comment_if_provided(self, mocker):
         mock_calculate_seconds = mocker.patch("dzira.dzira.calculate_seconds")
-        result = prepare_payload("2h", sentinel.start, sentinel.end, sentinel.comment)
+        args = {**self.args, "time": "2h"}
 
-        assert result == dict(time="2h", comment=sentinel.comment)
+        result = prepare_payload(**args)
+
+        assert result == dict(**args)
         mock_calculate_seconds.assert_not_called()
 
     def test_uses_time_and_start_end_when_time_not_provided(self, mocker):
         mock_calculate_seconds = mocker.patch("dzira.dzira.calculate_seconds")
-        result = prepare_payload(None, sentinel.start, sentinel.end, sentinel.comment)
+        args = dict(
+            time=None, start=sentinel.start, end=sentinel.end, comment=sentinel.comment, worklog_id=None
+        )
+        result = prepare_payload(**args)
 
-        assert result == dict(
-            seconds=mock_calculate_seconds.return_value, comment=sentinel.comment
-        )
-        mock_calculate_seconds.assert_called_once_with(
-            start=sentinel.start, end=sentinel.end
-        )
+        assert result == {**args, "seconds": mock_calculate_seconds.return_value}
+        mock_calculate_seconds.assert_called_once_with(**args)
 
 
 @patch("dzira.dzira.get_sprint_issues")
@@ -635,23 +640,21 @@ class TestEstablishAction:
         mock_get_worklog = mocker.patch("dzira.dzira.get_worklog")
         mock_partial = mocker.patch("dzira.dzira.partial")
 
-        result = establish_action(
-            sentinel.jira, {"issue": sentinel.issue}, sentinel.worklog
-        )
+        result = establish_action(sentinel.jira, issue=sentinel.issue, worklog_id=sentinel.worklog)
 
         assert result == mock_partial.return_value
         mock_partial.assert_called_once_with(
             update_worklog, mock_get_worklog.return_value
         )
         mock_get_worklog.assert_called_once_with(
-            sentinel.jira, sentinel.issue, sentinel.worklog
+            sentinel.jira, issue=sentinel.issue, worklog_id=sentinel.worklog
         )
 
     def test_returns_add_worklog_if_worklog_id_not_provided(self, mocker):
         mock_get_worklog = mocker.patch("dzira.dzira.get_worklog")
         mock_partial = mocker.patch("dzira.dzira.partial")
 
-        result = establish_action(sentinel.jira, {"issue": sentinel.issue}, None)
+        result = establish_action(sentinel.jira, issue=sentinel.issue, worklog_id=None)
 
         assert result == mock_partial.return_value
         mock_partial.assert_called_once_with(add_worklog, sentinel.jira)
@@ -690,48 +693,53 @@ class TestLog:
         mocker.patch.dict(
             os.environ, {"JIRA_TOKEN": "token", "JIRA_EMAIL": "email"}, clear=True
         )
-        mock_prepare_payload = mocker.patch("dzira.dzira.prepare_payload")
         mocker.patch("dzira.dzira.get_config")
         mock_establish_issue  = mocker.patch("dzira.dzira.establish_issue")
         mock_get_jira = mocker.patch("dzira.dzira.get_jira")
         mock_partial = mocker.patch("dzira.dzira.partial")
         mock_get_worklog = mocker.patch("dzira.dzira.get_worklog")
-        mock_prepare_payload.return_value = {"comment": "foobar"}
 
         result = runner.invoke(log, ["123", "--worklog", "999", "--comment", "foobar"])
 
         assert result.exit_code == 0
         mock_partial.assert_called_once_with(update_worklog, mock_get_worklog.return_value)
         mock_get_worklog.assert_called_once_with(
-            mock_get_jira.return_value, mock_establish_issue.return_value, 999
+            mock_get_jira.return_value,
+            issue=mock_establish_issue.return_value,
+            comment="foobar",
+            worklog_id=999,
+            end=None,
+            start=None,
+            time=None,
         )
-
 
     def test_runs_stuff_in_order(self, mocker):
         mocker.patch.dict(
             os.environ, {"JIRA_TOKEN": "token", "JIRA_EMAIL": "email"}, clear=True
         )
-        mock_prepare_payload = mocker.patch("dzira.dzira.prepare_payload")
         mock_get_config = mocker.patch("dzira.dzira.get_config")
         mock_get_jira = mocker.patch("dzira.dzira.get_jira")
         mock_establish_issue = mocker.patch("dzira.dzira.establish_issue")
         mock_establish_action = mocker.patch("dzira.dzira.establish_action")
         mock_jira = mock_get_jira.return_value
         mock_config = mock_get_config.return_value
-        args = {"time": "2h"}
-        mock_prepare_payload.return_value = args
 
         result = runner.invoke(cli, ["log", "123", "-t", "2h"])
 
         assert result.exit_code == 0
-        mock_prepare_payload.assert_called_once_with("2h", None, None, None)
         mock_get_config.assert_called_once_with(
             config=dict(JIRA_TOKEN="token", JIRA_EMAIL="email"),
         )
         mock_get_jira.assert_called_once_with(mock_config)
         mock_establish_issue.assert_called_once_with(mock_jira, mock_config, "123")
         mock_establish_action.assert_called_once_with(
-            mock_jira, {**args, "issue": mock_establish_issue.return_value}, None
+            mock_jira,
+            issue=mock_establish_issue.return_value,
+            time="2h",
+            comment=None,
+            worklog_id=None,
+            end=None,
+            start=None,
         )
 
 

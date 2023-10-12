@@ -4,6 +4,7 @@ import re
 import sys
 from datetime import datetime, timedelta
 from functools import partial
+from operator import itemgetter
 from pathlib import Path
 from typing import Callable
 
@@ -67,7 +68,6 @@ def get_config(config: dict = {}) -> dict:
 #  JIRA wrapper
 ##################################################
 
-
 def get_jira(config: dict) -> JIRA:
     return JIRA(
         server=f"https://{config['JIRA_SERVER']}",
@@ -117,12 +117,10 @@ def add_worklog(
     )
 
 
-def get_worklog(
-    jira: JIRA, issue: str | int, worklog_id: str | int
-) -> Worklog:
-    if work_log := jira.worklog(issue=issue, id=str(worklog_id)):
+def get_worklog(jira: JIRA, **payload) -> Worklog:
+    if work_log := jira.worklog(issue=payload["issue"], id=str(payload["worklog_id"])):
         return work_log
-    raise Exception(f"could not find worklog {worklog_id} for issue {issue!r}")
+    raise Exception(f"could not find worklog {payload['worklog_id']} for issue {payload['issue']!r}")
 
 
 def update_worklog(
@@ -176,7 +174,6 @@ def cli(ctx, file, board, token, email, server):
 ##################################################
 #  LS command
 ##################################################
-
 
 def get_current_sprint_with_issues(config: dict) -> tuple[Sprint, list, Board]:
     config = get_config(config=config)
@@ -238,7 +235,6 @@ def ls(ctx):
 
 ### Validators
 
-
 def is_valid_time(time: str) -> bool:
     return (
         re.match(r"^(([1-9]|1\d|2[0-3])h)?(\s+(?=\d))?(([1-5]\d|[1-9])m)?$", time)
@@ -274,13 +270,10 @@ def validate_hour(ctx, param, value):
 
 ### Payload
 
+def calculate_seconds(**payload) -> str:
+    start, end = itemgetter("start", "end")(payload)
 
-def calculate_seconds(start: str, end: str | None = None) -> str:
-    if end is None:
-        t2 = datetime.now()
-    else:
-        t2 = datetime.strptime(re.sub(r"[,.h]", ":", end), "%H:%M")
-
+    t2 = datetime.now() if end is None else datetime.strptime(re.sub(r"[,.h]", ":", end), "%H:%M")
     t1 = datetime.strptime(re.sub(r"[,.h]", ":", start), "%H:%M")
 
     if t2 < t1:
@@ -290,17 +283,9 @@ def calculate_seconds(start: str, end: str | None = None) -> str:
         return str(int(delta_seconds))
 
 
-def prepare_payload(
-    time: str | None,
-    start: str | None,
-    end: str | None,
-    comment: str | None,
-) -> dict:
-    payload = dict(comment=comment)
-    if time:
-        payload["time"] = time
-    elif start:
-        payload["seconds"] = calculate_seconds(start=start, end=end)
+def prepare_payload(**payload) -> dict:
+    if not payload["time"] and payload["start"]:
+        payload["seconds"] = calculate_seconds(**payload)
     return payload
 
 
@@ -324,9 +309,9 @@ def establish_issue(jira: JIRA, config: dict, issue: str) -> str:
     return candidates[0].key
 
 
-def establish_action(jira: JIRA, payload: dict, worklog_id: str | None) -> Callable:
-    if worklog_id:
-        worklog = get_worklog(jira, payload["issue"], worklog_id)
+def establish_action(jira: JIRA, **payload) -> Callable:
+    if payload["worklog_id"]:
+        worklog = get_worklog(jira, **payload)
         return partial(update_worklog, worklog)
     return partial(add_worklog, jira)
 
@@ -387,13 +372,13 @@ def log(ctx, issue, time, start, end, comment, worklog_id):
                 "provide valid --time or --start options"
             )
 
-    args = prepare_payload(time, start, end, comment)
+    payload = prepare_payload(**ctx.params)
     config = get_config(config=ctx.obj)
     jira = get_jira(config)
-    args["issue"] = establish_issue(jira, config, issue)
-    action = establish_action(jira, args, worklog_id)
+    payload["issue"] = establish_issue(jira, config, issue)
+    action = establish_action(jira, **payload)
 
-    action(**args)
+    action(**payload)
 
 
 def main():
