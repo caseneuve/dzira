@@ -376,8 +376,8 @@ def log(ctx, issue, time, start, end, comment, worklog_id):
     When WORKLOG id is present, it will update an existing log,
     rather then create a new one.
     """
-    if not (time or start):
-        if worklog_id and comment is None:
+    if (not (time or start)) and (not (worklog_id and comment)):
+        if worklog_id and (comment is None):
             raise click.UsageError(
                 "to update a worklog, either time spent or a comment is needed"
             )

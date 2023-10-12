@@ -686,6 +686,27 @@ class TestLog:
             in result.stdout
         )
 
+    def test_returns_right_action_when_worklog_and_comment_provided(self, mocker):
+        mocker.patch.dict(
+            os.environ, {"JIRA_TOKEN": "token", "JIRA_EMAIL": "email"}, clear=True
+        )
+        mock_prepare_payload = mocker.patch("dzira.dzira.prepare_payload")
+        mocker.patch("dzira.dzira.get_config")
+        mock_establish_issue  = mocker.patch("dzira.dzira.establish_issue")
+        mock_get_jira = mocker.patch("dzira.dzira.get_jira")
+        mock_partial = mocker.patch("dzira.dzira.partial")
+        mock_get_worklog = mocker.patch("dzira.dzira.get_worklog")
+        mock_prepare_payload.return_value = {"comment": "foobar"}
+
+        result = runner.invoke(log, ["123", "--worklog", "999", "--comment", "foobar"])
+
+        assert result.exit_code == 0
+        mock_partial.assert_called_once_with(update_worklog, mock_get_worklog.return_value)
+        mock_get_worklog.assert_called_once_with(
+            mock_get_jira.return_value, mock_establish_issue.return_value, 999
+        )
+
+
     def test_runs_stuff_in_order(self, mocker):
         mocker.patch.dict(
             os.environ, {"JIRA_TOKEN": "token", "JIRA_EMAIL": "email"}, clear=True
