@@ -268,6 +268,22 @@ def validate_hour(ctx, param, value):
     )
 
 
+def check_params(**args) -> None:
+    time, start, worklog_id, comment = itemgetter("time", "start", "worklog_id", "comment")(args)
+
+    if (time or start) or (worklog_id and comment):
+        return
+
+    if worklog_id and (comment is None):
+        msg = "to update a worklog, either time spent or a comment is needed"
+    else:
+        msg = (
+            "cannot spend without knowing working time or when work has started: \n"
+            "provide valid --time or --start options"
+        )
+    raise click.UsageError(msg)
+
+
 ### Payload
 
 def calculate_seconds(**payload) -> str:
@@ -346,7 +362,7 @@ def establish_action(jira: JIRA, **payload) -> Callable:
 @click.option(
     "-w", "--worklog", "worklog_id", type=int, help="Id of the worklog to be updated"
 )
-def log(ctx, issue, time, start, end, comment, worklog_id):
+def log(ctx, issue, **rest):
     """
     Log time spent on ISSUE number or ISSUE with description containing
     matching string.
@@ -361,16 +377,7 @@ def log(ctx, issue, time, start, end, comment, worklog_id):
     When WORKLOG id is present, it will update an existing log,
     rather then create a new one.
     """
-    if (not (time or start)) and (not (worklog_id and comment)):
-        if worklog_id and (comment is None):
-            raise click.UsageError(
-                "to update a worklog, either time spent or a comment is needed"
-            )
-        else:
-            raise click.UsageError(
-                "cannot spend without knowing working time or when work has started: \n"
-                "provide valid --time or --start options"
-            )
+    check_params(**rest)
 
     payload = prepare_payload(**ctx.params)
     config = get_config(config=ctx.obj)
