@@ -1,0 +1,3 @@
+* TODO spending with -s while updating a log
+* TODO using only -s like =-s12.00= which produced =13:43:36  Spent 27036w 3d 1h 43m in PA-107...=
+* TODO add spinner (as decorator on get jira and establish issue + action)

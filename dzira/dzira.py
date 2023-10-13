@@ -1,12 +1,16 @@
 from __future__ import annotations
+import concurrent.futures
+from dataclasses import dataclass
 import os
 import re
 import sys
+import time
 from datetime import datetime, timedelta
-from functools import partial
+from functools import partial, wraps
+from itertools import cycle
 from operator import itemgetter
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
 import click
 from dotenv import dotenv_values
@@ -31,6 +35,47 @@ C = dict(
 CONFIG_DIR_NAME = "dzira"
 DOTFILE = f".{CONFIG_DIR_NAME}"
 REQUIRED_KEYS = "JIRA_SERVER", "JIRA_EMAIL", "JIRA_TOKEN", "JIRA_BOARD"
+
+
+class D(dict):
+     def keys(self, *ks):
+         if not ks:
+             ks = super().keys()
+         return [self[k] for k in ks]
+     def __call__(self, k):
+         return self.get(k)
+     def map(self, fn):
+         self = {k: v for k, v in [fn(*a) for a in self.items()]}
+         return self
+
+
+@dataclass
+class Result:
+    result: Any = None
+    stdout: str = ""
+
+
+def spin_it(msg="", done="✓"):
+    spinner = cycle('⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏')
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(func, *args, **kwargs)
+
+                while future.running():
+                    print((f"\r{C['purple']}{next(spinner)}  {msg}"), end="")
+                    sys.stdout.flush()
+                    time.sleep(0.1)
+
+                r: Result = future.result()
+                print(
+                    f"\r{C['green']}{done}  {msg}{C['reset']}{r.stdout}",
+                    flush=True
+                )
+                return r
+        return wrapper
+    return decorator
 
 
 def get_config_from_file(config_file: str | Path | None = None) -> dict:
@@ -68,31 +113,36 @@ def get_config(config: dict = {}) -> dict:
 #  JIRA wrapper
 ##################################################
 
-def get_jira(config: dict) -> JIRA:
-    return JIRA(
+@spin_it("Getting client")
+def get_jira(config: dict) -> Result:
+    jira = JIRA(
         server=f"https://{config['JIRA_SERVER']}",
         basic_auth=(config["JIRA_EMAIL"], config["JIRA_TOKEN"]),
     )
+    msg = f": found server ({config['JIRA_SERVER']}) and board ({config['JIRA_BOARD']})"
+    return Result(stdout=msg, result=jira)
 
 
 def get_board_name(config: dict) -> str:
     return f'{config["JIRA_BOARD"]} board'
 
 
-def get_board_by_name(jira: JIRA, name: str) -> Board:
+@spin_it("Getting board")
+def get_board_by_name(jira: JIRA, name: str) -> Result:
     if boards := jira.boards(name=name):
-        return boards[0]
+        return Result(result=boards[0])
     raise Exception(f"could not find any board matching {name!r}")
 
 
-def get_sprints(jira: JIRA, board: Board, state: str = "active") -> list:
+@spin_it("Getting sprint")
+def get_sprints(jira: JIRA, board: Board, state: str = "active") -> Result:
     if sprints := jira.sprints(board_id=board.id, state=state):
-        return sprints
+        return Result(result=sprints)
     raise Exception(f"could not find any sprints for board {board.name!r}")
 
 
 def get_current_sprint(jira: JIRA, board: Board) -> Sprint:
-    return get_sprints(jira, board)[0]
+    return get_sprints(jira, board).result[0]
 
 
 def get_sprint_issues(jira: JIRA, sprint: Sprint) -> list:
@@ -101,19 +151,18 @@ def get_sprint_issues(jira: JIRA, sprint: Sprint) -> list:
     raise Exception(f"could not find any issues for sprint {sprint.name!r}")
 
 
-def add_worklog(
-    jira: JIRA,
-    issue: str | int,
-    time: str | None = None,
-    seconds: str | None = None,
-    comment: str | None = None,
-) -> None:
+@spin_it("Adding worklog")
+def add_worklog(jira: JIRA, **payload) -> Result:
+    issue, time, seconds, comment = itemgetter("issue", "time", "seconds", "comment")(payload)
+
     work_log = jira.add_worklog(
         issue=issue, timeSpent=time, timeSpentSeconds=seconds, comment=comment
     )
-    print(
-        f"{datetime.now():%H:%M:%S}  Spent {work_log.raw['timeSpent']} in {issue} "
-        f"[worklog {work_log.id}]"
+    return Result(
+        stdout=(
+            f": spent {work_log.raw['timeSpent']} in {issue} "
+            f"[worklog {work_log.id}] at {datetime.now():%H:%M:%S}"
+        )
     )
 
 
@@ -123,20 +172,14 @@ def get_worklog(jira: JIRA, **payload) -> Worklog:
     raise Exception(f"could not find worklog {payload['worklog_id']} for issue {payload['issue']!r}")
 
 
-def update_worklog(
-    worklog: Worklog, time: str | None = None, comment: str | None = None, **kwargs
-) -> None:
-    fields = {}
-    if time:
-        fields["timeSpent"] = time
-    if comment:
-        fields["comment"] = comment
-    if not fields:
-        raise Exception(
-            f"at least one of <time> or <comment> fields needed to perform the update!"
-        )
+@spin_it("Updating worklog")
+def update_worklog(worklog: Worklog, **payload) -> Result:
+    time, comment = itemgetter("time", "comment")(payload)
+    if not (time or comment):
+        raise Exception(f"at least one of <time> or <comment> fields needed to perform the update!")
+    fields = {k: v for k, v in zip(["timeSpent", "comment"], [time, comment]) if v}
     worklog.update(fields=fields)
-    print(f"Worklog {worklog.id} updated!")
+    return Result(stdout=f": {worklog.id} updated!")
 
 
 ##################################################
@@ -177,8 +220,8 @@ def cli(ctx, file, board, token, email, server):
 
 def get_current_sprint_with_issues(config: dict) -> tuple[Sprint, list, Board]:
     config = get_config(config=config)
-    jira = get_jira(config)
-    board = get_board_by_name(jira, get_board_name(config))
+    jira = get_jira(config).result
+    board = get_board_by_name(jira, get_board_name(config)).result
     sprint = get_current_sprint(jira, board)
     return sprint, get_sprint_issues(jira, sprint), board
 
@@ -205,7 +248,8 @@ def show_issues(issues: list) -> None:
             colalign=("right", "left", "left", "right", "right"),
             maxcolwidths=[None, 35, None, None, None],
             tablefmt="grid",
-        )
+        ),
+        flush=True
     )
 
 
@@ -214,7 +258,8 @@ def show_sprint_info(sprint: Sprint, board: Board) -> None:
     fmt = lambda d: datetime.strptime(d, "%Y-%m-%dT%H:%M:%S.%fZ").strftime("%a, %b %d")
     print(
         f"\n{C['bold']}  {sprint.name} by {project}{C['reset']} "
-        f"[{fmt(sprint.startDate)} -> {fmt(sprint.endDate)}]\n"
+        f"[{fmt(sprint.startDate)} -> {fmt(sprint.endDate)}]\n",
+        flush=True
     )
 
 
@@ -286,8 +331,11 @@ def check_params(**args) -> None:
 
 ### Payload
 
-def calculate_seconds(**payload) -> str:
+def calculate_seconds(**payload) -> str | None:
     start, end = itemgetter("start", "end")(payload)
+
+    if start is None:
+        return
 
     t2 = datetime.now() if end is None else datetime.strptime(re.sub(r"[,.h]", ":", end), "%H:%M")
     t1 = datetime.strptime(re.sub(r"[,.h]", ":", start), "%H:%M")
@@ -300,8 +348,8 @@ def calculate_seconds(**payload) -> str:
 
 
 def prepare_payload(**payload) -> dict:
-    if not payload["time"] and payload["start"]:
-        payload["seconds"] = calculate_seconds(**payload)
+    # if not payload["time"] and payload["start"]:
+    payload["seconds"] = calculate_seconds(**payload)
     return payload
 
 
@@ -311,7 +359,7 @@ def establish_issue(jira: JIRA, config: dict, issue: str) -> str:
     if issue.isdigit():
         return f"{board}-{issue}"
 
-    jira_board = get_board_by_name(jira, board)
+    jira_board = get_board_by_name(jira, board).result
     sprint = get_current_sprint(jira, jira_board)
     sprint_issues = get_sprint_issues(jira, sprint)
     candidates = [i for i in sprint_issues if issue.lower() in i.fields.summary.lower()]
@@ -381,7 +429,7 @@ def log(ctx, issue, **rest):
 
     payload = prepare_payload(**ctx.params)
     config = get_config(config=ctx.obj)
-    jira = get_jira(config)
+    jira = get_jira(config).result
     payload["issue"] = establish_issue(jira, config, issue)
     action = establish_action(jira, **payload)
 
