@@ -85,6 +85,20 @@ class TestC:
         assert c(*test_input) == expected
 
 
+class TestResult:
+    def test_instantiates_with_default_values_for_result_and_stdout(self):
+        result = Result()
+
+        assert result.result is None
+        assert result.stdout == ""
+
+    def test_instantiates_with_given_values(self):
+        result = Result(result=sentinel.result, stdout="foo")
+
+        assert result.result == sentinel.result
+        assert result.stdout == "foo"
+
+
 class TestSpinIt:
     def test_todo(self):
         assert False, "need to write tests"
