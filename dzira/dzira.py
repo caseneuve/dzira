@@ -305,16 +305,6 @@ def show_issues(issues: list) -> None:
     )
 
 
-# def show_sprint_info(sprint: Sprint, board: Board) -> None:
-#     project = board.raw["location"]["projectName"]
-#     fmt = lambda d: datetime.strptime(d, "%Y-%m-%dT%H:%M:%S.%fZ").strftime("%a, %b %d")
-#     print(
-#         f"\n{C['bold']}  {sprint.name} by {project}{C['reset']} "
-#         f"[{fmt(sprint.startDate)} -> {fmt(sprint.endDate)}]\n",
-#         flush=True,
-#     )
-
-
 @cli.command()
 @click.pass_context
 @click.help_option("-h", "--help")
@@ -330,7 +320,6 @@ def ls(ctx):
 ##################################################
 
 ### Validators
-
 
 def is_valid_time(time: str) -> bool:
     return (
@@ -385,7 +374,6 @@ def check_params(**args) -> None:
 
 ### Payload
 
-
 def calculate_seconds(**payload) -> dict:
     start, end = itemgetter("start", "end")(payload)
 
@@ -405,12 +393,6 @@ def calculate_seconds(**payload) -> dict:
         delta_seconds = (t2 - t1).total_seconds()
         payload["seconds"] = str(int(delta_seconds))
         return payload
-
-
-# def prepare_payload(**payload) -> dict:
-#     # if not payload["time"] and payload["start"]:
-#     payload["seconds"] = calculate_seconds(**payload)
-#     return payload
 
 
 def establish_issue(jira: JIRA, config: dict, issue: str) -> str:

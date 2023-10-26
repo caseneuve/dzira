@@ -1,7 +1,7 @@
 import os
 import pathlib
 import sys
-from unittest.mock import Mock, PropertyMock, call, patch, sentinel, MagicMock
+from unittest.mock import Mock, PropertyMock, call, patch, sentinel
 
 import pytest
 import click
@@ -12,6 +12,7 @@ from dzira.dzira import (
     DOTFILE,
     Result,
     _get_board_by_name,
+    _update_worklog,
     add_worklog,
     c,
     calculate_seconds,
@@ -26,7 +27,6 @@ from dzira.dzira import (
     get_current_sprint,
     get_current_sprint_with_issues,
     get_jira,
-    _get_sprint_issues,
     get_sprint_issues,
     get_sprints,
     get_worklog,
@@ -35,7 +35,6 @@ from dzira.dzira import (
     log,
     ls,
     main,
-    _update_worklog,
     update_worklog,
     validate_hour,
     validate_time,
@@ -640,31 +639,6 @@ class TestValidateParams:
     def test_does_not_rise_when_worklog_and_comment(self):
         args = {**self.args, "worklog_id": "999", "comment": "asdf"}
         check_params(**args)  # should not rise
-
-
-# class TestPreparePaload:
-#     args = dict(
-#         time=None, start=sentinel.start, end=sentinel.end, comment=sentinel.comment, worklog_id=None
-#     )
-
-#     def test_uses_time_and_comment_if_provided(self, mocker):
-#         mock_calculate_seconds = mocker.patch("dzira.dzira.calculate_seconds")
-#         args = {**self.args, "time": "2h"}
-
-#         result = prepare_payload(**args)
-
-#         assert result == dict(**args)
-#         mock_calculate_seconds.assert_not_called()
-
-#     def test_uses_time_and_start_end_when_time_not_provided(self, mocker):
-#         mock_calculate_seconds = mocker.patch("dzira.dzira.calculate_seconds")
-#         args = dict(
-#             time=None, start=sentinel.start, end=sentinel.end, comment=sentinel.comment, worklog_id=None
-#         )
-#         result = prepare_payload(**args)
-
-#         assert result == {**args, "seconds": mock_calculate_seconds.return_value}
-#         mock_calculate_seconds.assert_called_once_with(**args)
 
 
 @patch("dzira.dzira.get_sprint_issues")
