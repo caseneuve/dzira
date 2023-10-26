@@ -49,10 +49,10 @@ def spin_it(msg="", done="✓", fail="✗"):
     spinner = cycle("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
     separator = "  "
     def decorator(func):
+        func.is_decorated_with_spin_it = True
+
         @wraps(func)
         def wrapper(*args, **kwargs):
-            func.is_decorated_with_spin_it = True
-
             if not use_spinner:
                 return func(*args, **kwargs)
             try:

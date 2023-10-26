@@ -216,8 +216,7 @@ class TestGetBoardByNamePrivate:
 
 class TestGetBoardByNamePublic:
     def test_is_decorated_correctly(self):
-        get_board_by_name(Mock(), Mock())
-        assert get_board_by_name.__wrapped__.is_decorated_with_spin_it
+        assert get_board_by_name.is_decorated_with_spin_it
 
     def test_calls_private_function_and_wraps_the_result(self, mocker):
         mock_jira = Mock()
@@ -265,8 +264,7 @@ class TestGetSprints:
 
 class TestGetCurrentSprint:
     def test_is_decorated_correctly(self):
-        get_current_sprint(Mock(), Mock())
-        assert get_current_sprint.__wrapped__.is_decorated_with_spin_it
+        assert get_current_sprint.is_decorated_with_spin_it
 
     def test_calls_returns_wrapped_first_sprint_from_get_sprints(self, mocker):
         mock_get_sprints = mocker.patch("dzira.dzira.get_sprints")
@@ -287,8 +285,7 @@ class TestGetCurrentSprint:
 
 class TestGetSprintIssuesPublic:
     def test_is_decorated_correctly(self):
-        get_sprint_issues(Mock(), Mock())
-        assert get_sprint_issues.__wrapped__.is_decorated_with_spin_it
+        assert get_sprint_issues.is_decorated_with_spin_it
 
     def test_calls_private_function_and_wraps_the_result(self, mocker):
         mock_private = mocker.patch("dzira.dzira._get_sprint_issues")
@@ -369,8 +366,7 @@ class TestUpdateWorklogPrivate:
 
 class TestUpdateWorklogPublic:
     def test_is_decorated_correctly(self):
-        update_worklog(Mock())
-        assert update_worklog.__wrapped__.is_decorated_with_spin_it
+        assert update_worklog.is_decorated_with_spin_it
 
     def test_calls_private_function_and_wraps_the_result(self, mocker):
         mock_worklog = Mock(id="42")
