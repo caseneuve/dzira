@@ -1,7 +1,7 @@
 import os
 import pathlib
 import sys
-from unittest.mock import Mock, PropertyMock, call, patch, sentinel
+from unittest.mock import Mock, PropertyMock, call, patch, sentinel, MagicMock
 
 import pytest
 import click
@@ -10,7 +10,10 @@ from click.testing import CliRunner
 from dzira.dzira import (
     CONFIG_DIR_NAME,
     DOTFILE,
+    Result,
+    _get_board_by_name,
     add_worklog,
+    c,
     calculate_seconds,
     check_params,
     cli,
@@ -23,6 +26,7 @@ from dzira.dzira import (
     get_current_sprint,
     get_current_sprint_with_issues,
     get_jira,
+    _get_sprint_issues,
     get_sprint_issues,
     get_sprints,
     get_worklog,
@@ -31,7 +35,7 @@ from dzira.dzira import (
     log,
     ls,
     main,
-    prepare_payload,
+    _update_worklog,
     update_worklog,
     validate_hour,
     validate_time,
@@ -48,6 +52,42 @@ def config(mocker):
         "JIRA_BOARD": "XYZ",
     }
     return mock_dotenv_values
+
+
+class TestC:
+    @pytest.mark.parametrize(
+        "test_input,expected",
+        [
+            ("^bold", "\033[1m\033[0m"),
+            ("^red", "\033[91m\033[0m"),
+            ("^green", "\033[92m\033[0m"),
+            ("^yellow", "\033[93m\033[0m"),
+            ("^blue", "\033[94m\033[0m"),
+            ("^magenta", "\033[95m\033[0m"),
+            ("^cyan", "\033[96m\033[0m"),
+         ]
+    )
+    def test_uses_right_codes_for_given_colors(self, test_input, expected):
+        assert c(test_input) == expected
+
+    @pytest.mark.parametrize(
+        "test_input,expected",
+        [
+            (("^red", "text"), "\033[91mtext\033[0m"),
+            (("red",), "red\033[0m"),
+            (
+                ("^bold", "one ", "^reset", "^green", "two"),
+                "\033[1mone \033[0m\033[92mtwo\033[0m"
+            ),
+         ]
+    )
+    def test_is_variadic(self, test_input, expected):
+        assert c(*test_input) == expected
+
+
+class TestSpinIt:
+    def test_todo(self):
+        assert False, "need to write tests"
 
 
 class TestGetConfigFromFile:
@@ -142,22 +182,40 @@ class TestGetBoardName:
         assert get_board_name({"JIRA_BOARD": "XYZ"}) == "XYZ board"
 
 
-class TestGetBoardByName:
-    def test_returns_first_board_got_from_jira(self):
-        mock_jira = Mock(boards=Mock(return_value=[sentinel.one, sentinel.two]))
+class TestGetBoardByNamePrivate:
+    def test_returns_first_board_from_jira(self):
+        mock_jira = Mock(boards=Mock(return_value=[sentinel.board]))
 
-        result = get_board_by_name(mock_jira, sentinel.name)
+        result = _get_board_by_name(mock_jira, sentinel.name)
 
-        assert result == sentinel.one
         mock_jira.boards.assert_called_once_with(name=sentinel.name)
+        assert result == sentinel.board
 
     def test_raises_when_jira_could_not_find_any_board(self):
         mock_jira = Mock(boards=Mock(return_value=[]))
 
         with pytest.raises(Exception) as exc_info:
-            get_board_by_name(mock_jira, "XYZ")
+            _get_board_by_name(mock_jira, "XYZ")
 
         assert str(exc_info.value) == "could not find any board matching 'XYZ'"
+
+
+class TestGetBoardByNamePublic:
+    def test_is_decorated_correctly(self):
+        get_board_by_name(Mock(), Mock())
+        assert get_board_by_name.__wrapped__.is_decorated_with_spin_it
+
+    def test_calls_private_function_and_wraps_the_result(self, mocker):
+        mock_jira = Mock()
+        mock_private = mocker.patch("dzira.dzira._get_board_by_name")
+        board = Mock(raw={"location": {"displayName": "Foo"}})
+        mock_private.return_value = board
+
+        result = get_board_by_name(mock_jira, sentinel.name)
+
+        mock_private.assert_called_once_with(mock_jira, sentinel.name)
+        assert result.result == board
+        assert "Foo" in result.stdout
 
 
 class TestGetSprints:
@@ -192,40 +250,40 @@ class TestGetSprints:
 
 
 class TestGetCurrentSprint:
-    def test_returns_first_element_of_the_list_found_by_get_sprints(self, mocker):
-        mock_jira = Mock()
-        mock_board = Mock()
+    def test_is_decorated_correctly(self):
+        get_current_sprint(Mock(), Mock())
+        assert get_current_sprint.__wrapped__.is_decorated_with_spin_it
+
+    def test_calls_returns_wrapped_first_sprint_from_get_sprints(self, mocker):
         mock_get_sprints = mocker.patch("dzira.dzira.get_sprints")
-        mock_get_sprints.return_value = [sentinel.sprint1, sentinel.sprint2]
-
-        result = get_current_sprint(mock_jira, mock_board)
-
-        assert result == sentinel.sprint1
-        mock_get_sprints.assert_called_once_with(mock_jira, mock_board)
-
-
-class TestGetSprintIssues:
-    def test_returns_list_of_issues(self):
-        mock_jira = Mock(search_issues=Mock(return_value=(sentinel.issue,)))
-        mock_sprint = Mock(name="foo")
-
-        result = get_sprint_issues(mock_jira, mock_sprint)
-
-        assert result == [sentinel.issue]
-        mock_jira.search_issues.assert_called_once_with(
-            jql_str=f"Sprint = {mock_sprint.name!r}"
+        mock_sprint = Mock(
+            name="Foo",
+            startDate="1410-07-14T12:00:00.00Z",
+            endDate="1410-08-14T12:00:00.00Z"
         )
+        mock_get_sprints.return_value = [mock_sprint]
 
-    def test_raises_when_jira_could_not_find_matching_issues(self):
-        mock_jira = Mock(search_issues=Mock(return_value=tuple()))
-        mock_sprint = Mock(name="foo")
+        result = get_current_sprint(sentinel.jira, sentinel.board)
 
-        with pytest.raises(Exception) as exc_info:
-            get_sprint_issues(mock_jira, mock_sprint)
+        mock_get_sprints.assert_called_once_with(sentinel.jira, sentinel.board)
+        assert type(result) == Result
+        assert result.result == mock_get_sprints.return_value[0]
 
-        assert f"could not find any issues for sprint {mock_sprint.name!r}" in str(
-            exc_info.value
-        )
+
+
+class TestGetSprintIssuesPublic:
+    def test_is_decorated_correctly(self):
+        get_sprint_issues(Mock(), Mock())
+        assert get_sprint_issues.__wrapped__.is_decorated_with_spin_it
+
+    def test_calls_private_function_and_wraps_the_result(self, mocker):
+        mock_private = mocker.patch("dzira.dzira._get_sprint_issues")
+
+        result = get_sprint_issues(sentinel.jira, sentinel.sprint)
+
+        mock_private.assert_called_once_with(sentinel.jira, sentinel.sprint)
+        assert type(result) == Result
+        assert result.result == mock_private.return_value
 
 
 class TestAddWorklog:
@@ -275,27 +333,47 @@ class TestGetWorklog:
         assert "could not find worklog 999 for issue '123'" in str(exc_info)
 
 
-class TestUpdateWorklog:
+class TestUpdateWorklogPrivate:
     def test_updates_given_worklog_with_provided_fields(self):
-        mock_worklog = Mock(update=Mock())
+        mock_worklog = Mock(update=Mock(), id="42")
 
-        update_worklog(mock_worklog, time="2h", comment="blah!")
+        _update_worklog(mock_worklog, dict(time="2h", comment="blah!"))
 
         mock_worklog.update.assert_called_once_with(
             fields={"timeSpent": "2h", "comment": "blah!"}
         )
 
-    def test_raises_when_no_fields_provided(self):
+    def test_raises_when_no_time_nor_comment_fields_provided(self, mocker):
         mock_worklog = Mock(update=Mock())
 
         with pytest.raises(Exception) as exc_info:
-            update_worklog(mock_worklog)
+            _update_worklog(mock_worklog, dict(time=None, comment=None))
 
         assert "at least one of <time> or <comment> fields needed" in str(exc_info)
         mock_worklog.update.assert_not_called()
 
 
+class TestUpdateWorklogPublic:
+    def test_is_decorated_correctly(self):
+        update_worklog(Mock())
+        assert update_worklog.__wrapped__.is_decorated_with_spin_it
+
+    def test_calls_private_function_and_wraps_the_result(self, mocker):
+        mock_worklog = Mock(id="42")
+        mock_private = mocker.patch("dzira.dzira._update_worklog")
+
+        result = update_worklog(mock_worklog, time="2h", comment="blah!")
+
+        mock_private.assert_called_once_with(mock_worklog, dict(time="2h", comment="blah!"))
+        assert type(result) == Result
+        assert "42" in result.stdout
+
+
 class TestCalculateSeconds:
+    def test_returns_the_unchanged_payload_if_no_start_time(self):
+        input = {"start": None, "end": None, "foo": "bar"}
+        assert calculate_seconds(**input) == input
+
     def test_uses_current_time_if_only_start_parameter_provided(self, mocker):
         mock_datetime = mocker.patch("dzira.dzira.datetime")
         mock_datetime.strptime.return_value.__gt__ = Mock(return_value=False)
@@ -316,7 +394,7 @@ class TestCalculateSeconds:
         ],
     )
     def test_returns_seconds_delta_of_end_and_start(self, start, end, expected):
-        assert calculate_seconds(start=start, end=end) == expected
+        assert calculate_seconds(start=start, end=end)["seconds"] == expected
 
     def test_accepts_multiple_separators_in_input(self, mocker):
         mock_sub = mocker.patch("dzira.dzira.re.sub")
@@ -352,19 +430,13 @@ class TestGetCurrentSprintWithIssues:
         mock_get_board_by_name = mocker.patch("dzira.dzira.get_board_by_name")
         mock_get_current_sprint = mocker.patch("dzira.dzira.get_current_sprint")
         mock_get_sprint_issues = mocker.patch("dzira.dzira.get_sprint_issues")
-        jira = mock_get_jira.return_value
-        board = mock_get_board_by_name.return_value
-        sprint = mock_get_current_sprint.return_value
+        jira = mock_get_jira.return_value.result
+        board = mock_get_board_by_name.return_value.result
+        sprint = mock_get_current_sprint.return_value.result
 
-        (
-            expected_sprint,
-            expected_issues,
-            expected_board,
-        ) = get_current_sprint_with_issues({})
+        result = get_current_sprint_with_issues({})
 
-        assert expected_sprint == sprint
-        assert expected_issues == mock_get_sprint_issues.return_value
-        assert expected_board == board
+        assert result == mock_get_sprint_issues.return_value.result
         mock_get_config.assert_called_once()
         mock_get_jira.assert_called_once_with(mock_config)
         mock_get_board_name.assert_called_once_with(mock_config)
@@ -397,19 +469,13 @@ class TestLs:
         mock_get_current_sprint_with_issues = mocker.patch(
             "dzira.dzira.get_current_sprint_with_issues"
         )
-        mock_get_current_sprint_with_issues.return_value = (
-            sentinel.sprint,
-            sentinel.issues,
-            sentinel.board,
-        )
-        mock_show_sprint_info = mocker.patch("dzira.dzira.show_sprint_info")
+        mock_get_current_sprint_with_issues.return_value = sentinel.issues
         mock_show_issues = mocker.patch("dzira.dzira.show_issues")
 
         result = runner.invoke(cli, ["--token", "foo", "ls"])
 
         assert result.exit_code == 0
         mock_show_issues.assert_called_once_with(sentinel.issues)
-        mock_show_sprint_info.assert_called_once_with(sentinel.sprint, sentinel.board)
         mock_get_current_sprint_with_issues.assert_called_once_with(
             {"JIRA_TOKEN": "foo"}
         )
@@ -566,29 +632,29 @@ class TestValidateParams:
         check_params(**args)  # should not rise
 
 
-class TestPreparePaload:
-    args = dict(
-        time=None, start=sentinel.start, end=sentinel.end, comment=sentinel.comment, worklog_id=None
-    )
+# class TestPreparePaload:
+#     args = dict(
+#         time=None, start=sentinel.start, end=sentinel.end, comment=sentinel.comment, worklog_id=None
+#     )
 
-    def test_uses_time_and_comment_if_provided(self, mocker):
-        mock_calculate_seconds = mocker.patch("dzira.dzira.calculate_seconds")
-        args = {**self.args, "time": "2h"}
+#     def test_uses_time_and_comment_if_provided(self, mocker):
+#         mock_calculate_seconds = mocker.patch("dzira.dzira.calculate_seconds")
+#         args = {**self.args, "time": "2h"}
 
-        result = prepare_payload(**args)
+#         result = prepare_payload(**args)
 
-        assert result == dict(**args)
-        mock_calculate_seconds.assert_not_called()
+#         assert result == dict(**args)
+#         mock_calculate_seconds.assert_not_called()
 
-    def test_uses_time_and_start_end_when_time_not_provided(self, mocker):
-        mock_calculate_seconds = mocker.patch("dzira.dzira.calculate_seconds")
-        args = dict(
-            time=None, start=sentinel.start, end=sentinel.end, comment=sentinel.comment, worklog_id=None
-        )
-        result = prepare_payload(**args)
+#     def test_uses_time_and_start_end_when_time_not_provided(self, mocker):
+#         mock_calculate_seconds = mocker.patch("dzira.dzira.calculate_seconds")
+#         args = dict(
+#             time=None, start=sentinel.start, end=sentinel.end, comment=sentinel.comment, worklog_id=None
+#         )
+#         result = prepare_payload(**args)
 
-        assert result == {**args, "seconds": mock_calculate_seconds.return_value}
-        mock_calculate_seconds.assert_called_once_with(**args)
+#         assert result == {**args, "seconds": mock_calculate_seconds.return_value}
+#         mock_calculate_seconds.assert_called_once_with(**args)
 
 
 @patch("dzira.dzira.get_sprint_issues")
@@ -629,7 +695,7 @@ class TestEstablishIssue:
     def test_raises_when_no_matching_issue_in_current_sprint(
         self, _, __, ___, mock_get_sprint_issues
     ):
-        mock_get_sprint_issues.return_value = []
+        mock_get_sprint_issues.return_value = Result(result=[])
 
         with pytest.raises(Exception) as exc_info:
             establish_issue(Mock(), {}, "some description")
@@ -639,10 +705,12 @@ class TestEstablishIssue:
     def test_raises_when_more_than_one_matching_issue_in_current_sprint(
         self, _, __, ___, mock_get_sprint_issues
     ):
-        mock_get_sprint_issues.return_value = [
-            Mock(key="1", fields=Mock(summary="I have some description")),
-            Mock(key="2", fields=Mock(summary="Need some description")),
-        ]
+        mock_get_sprint_issues.return_value = Result(
+            result=[
+                Mock(key="1", fields=Mock(summary="I have some description")),
+                Mock(key="2", fields=Mock(summary="Need some description")),
+            ]
+        )
 
         with pytest.raises(Exception) as exc_info:
             establish_issue(Mock(), {}, "some description")
@@ -656,10 +724,12 @@ class TestEstablishIssue:
         ___,
         mock_get_sprint_issues,
     ):
-        mock_get_sprint_issues.return_value = [
-            Mock(key="1", fields=Mock(summary="I have some description")),
-            Mock(key="2", fields=Mock(summary="I don't have any matching phrases")),
-        ]
+        mock_get_sprint_issues.return_value = Result(
+            result= [
+                Mock(key="1", fields=Mock(summary="I have some description")),
+                Mock(key="2", fields=Mock(summary="I don't have any matching phrases")),
+            ]
+        )
 
         result = establish_issue(Mock(), {}, "some description")
 
@@ -693,7 +763,7 @@ class TestEstablishAction:
 
 
 class TestLog:
-    rest = dict(comment=None, worklog_id=None, end=None, start=None, time=None)
+    rest = dict(comment=None, worklog_id=None, end=None, start=None, time=None, spin=True)
 
     def test_help(self):
         result = runner.invoke(log, ["--help"])
@@ -718,7 +788,7 @@ class TestLog:
         mock_check_params.assert_called_once_with(**rest)
         mock_partial.assert_called_once_with(update_worklog, mock_get_worklog.return_value)
         mock_get_worklog.assert_called_once_with(
-            mock_get_jira.return_value,
+            mock_get_jira.return_value.result,
             issue=mock_establish_issue.return_value,
             **rest
         )
@@ -744,11 +814,11 @@ class TestLog:
             config=dict(JIRA_TOKEN="token", JIRA_EMAIL="email"),
         )
         mock_get_jira.assert_called_once_with(mock_config)
-        mock_establish_issue.assert_called_once_with(mock_jira, mock_config, "123")
+        mock_establish_issue.assert_called_once_with(mock_jira.result, mock_config, "123")
         mock_establish_action.assert_called_once_with(
-            mock_jira,
+            mock_jira.result,
             issue=mock_establish_issue.return_value,
-            **rest
+            **rest,
         )
 
 

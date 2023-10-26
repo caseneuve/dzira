@@ -14,6 +14,7 @@ Options:
   -k, --token TEXT     JIRA_TOKEN value
   -m, --email TEXT     JIRA_EMAIL value
   -d, --server TEXT    JIRA_SERVER value
+  --spin / --no-spin   Control the spinner
   --help               Show this message and exit.
 
 Commands:
@@ -59,7 +60,7 @@ Usage: dzira.py ls [OPTIONS]
   List issues from the current sprint
 
 Options:
-  --help  Show this message and exit.
+  -h, --help  Show this message and exit.
 ```
 
 
@@ -87,5 +88,5 @@ Options:
   -e, --end TEXT         Time when the work ended, e.g. '14:50', '16.10'
   -c, --comment TEXT     Comment added to logged time
   -w, --worklog INTEGER  Id of the worklog to be updated
-  --help                 Show this message and exit.
+  -h, --help             Show this message and exit.
 ```

@@ -15,38 +15,28 @@ from typing import Any, Callable
 import click
 from dotenv import dotenv_values
 from jira import JIRA
-from jira.resources import Board, Sprint, Worklog
+from jira.exceptions import JIRAError
+from jira.resources import Board, Issue, Sprint, Worklog
 from tabulate import tabulate
 
-
-C = dict(
-    purple="\033[95m",
-    cyan="\033[96m",
-    darkcyan="\033[36m",
-    blue="\033[94m",
-    green="\033[92m",
-    yellow="\033[93m",
-    red="\033[91m",
-    bold="\033[1m",
-    underline="\033[4m",
-    reset="\033[0m",
-)
 
 CONFIG_DIR_NAME = "dzira"
 DOTFILE = f".{CONFIG_DIR_NAME}"
 REQUIRED_KEYS = "JIRA_SERVER", "JIRA_EMAIL", "JIRA_TOKEN", "JIRA_BOARD"
 
+use_spinner = True
 
-class D(dict):
-     def keys(self, *ks):
-         if not ks:
-             ks = super().keys()
-         return [self[k] for k in ks]
-     def __call__(self, k):
-         return self.get(k)
-     def map(self, fn):
-         self = {k: v for k, v in [fn(*a) for a in self.items()]}
-         return self
+
+def c(*args):
+    C = {k: f"\033[{v}m" for k, v in (("^reset", 0),
+                                      ("^bold", 1),
+                                      ("^red", 91),
+                                      ("^green", 92),
+                                      ("^yellow", 93),
+                                      ("^blue", 94),
+                                      ("^magenta", 95),
+                                      ("^cyan", 96))}
+    return "".join([C.get(a, a) for a in args]) + C["^reset"]
 
 
 @dataclass
@@ -55,25 +45,42 @@ class Result:
     stdout: str = ""
 
 
-def spin_it(msg="", done="✓"):
-    spinner = cycle('⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏')
+def spin_it(msg="", done="✓", fail="✗"):
+    spinner = cycle("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
+    separator = "  "
     def decorator(func):
         @wraps(func)
         def wrapper(*args, **kwargs):
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                future = executor.submit(func, *args, **kwargs)
+            func.is_decorated_with_spin_it = True
 
-                while future.running():
-                    print((f"\r{C['purple']}{next(spinner)}  {msg}"), end="")
-                    sys.stdout.flush()
-                    time.sleep(0.1)
+            if not use_spinner:
+                return func(*args, **kwargs)
+            try:
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                    future = executor.submit(func, *args, **kwargs)
 
-                r: Result = future.result()
+                    while future.running():
+                        print(
+                            c("\r", "^magenta", next(spinner), separator, msg),
+                            end="", flush=True,
+                        )
+                        time.sleep(0.1)
+
+                    r: Result = future.result()
+                    print(
+                        c("\r", "^green", done, separator, msg, "^reset", r.stdout),
+                        flush=True
+                    )
+                    return r
+            except Exception as exc:
+                if type(exc) == JIRAError:
+                    error_msg = exc.response.json()["errors"]
+                else:
+                    error_msg = exc
                 print(
-                    f"\r{C['green']}{done}  {msg}{C['reset']}{r.stdout}",
-                    flush=True
+                    c("\r", "^red", fail, separator, msg),
+                    end=f": {error_msg}\n", flush=True,
                 )
-                return r
         return wrapper
     return decorator
 
@@ -113,13 +120,14 @@ def get_config(config: dict = {}) -> dict:
 #  JIRA wrapper
 ##################################################
 
+
 @spin_it("Getting client")
 def get_jira(config: dict) -> Result:
     jira = JIRA(
         server=f"https://{config['JIRA_SERVER']}",
         basic_auth=(config["JIRA_EMAIL"], config["JIRA_TOKEN"]),
     )
-    msg = f": found server ({config['JIRA_SERVER']}) and board ({config['JIRA_BOARD']})"
+    msg = f": connecting to {config['JIRA_SERVER']}"
     return Result(stdout=msg, result=jira)
 
 
@@ -127,33 +135,56 @@ def get_board_name(config: dict) -> str:
     return f'{config["JIRA_BOARD"]} board'
 
 
-@spin_it("Getting board")
-def get_board_by_name(jira: JIRA, name: str) -> Result:
+def _get_board_by_name(jira: JIRA, name: str) -> Board:
     if boards := jira.boards(name=name):
-        return Result(result=boards[0])
+        return boards[0]
     raise Exception(f"could not find any board matching {name!r}")
 
 
-@spin_it("Getting sprint")
-def get_sprints(jira: JIRA, board: Board, state: str = "active") -> Result:
+@spin_it("Getting board")
+def get_board_by_name(jira: JIRA, name: str) -> Result:
+    board = _get_board_by_name(jira, name)
+    return Result(
+        result=board,
+        stdout=f':  {board.raw["location"]["displayName"]}'
+    )
+
+
+def get_sprints(jira: JIRA, board: Board, state: str = "active") -> list:
     if sprints := jira.sprints(board_id=board.id, state=state):
-        return Result(result=sprints)
+        return sprints
     raise Exception(f"could not find any sprints for board {board.name!r}")
 
 
-def get_current_sprint(jira: JIRA, board: Board) -> Sprint:
-    return get_sprints(jira, board).result[0]
+@spin_it("Getting sprint")
+def get_current_sprint(jira: JIRA, board: Board) -> Result:
+    sprint = get_sprints(jira, board)[0]
+    fmt = lambda d: datetime.strptime(d, "%Y-%m-%dT%H:%M:%S.%fZ").strftime("%a, %b %d")
+    print("asdfsdaf")
+    return Result(
+        result=sprint,
+        stdout=f": {sprint.name} [{fmt(sprint.startDate)} -> {fmt(sprint.endDate)}]",
+    )
 
 
-def get_sprint_issues(jira: JIRA, sprint: Sprint) -> list:
+def _get_sprint_issues(jira: JIRA, sprint: Sprint) -> list:
     if issues := jira.search_issues(jql_str=f"Sprint = {sprint.name!r}"):
         return list(issues)
     raise Exception(f"could not find any issues for sprint {sprint.name!r}")
 
 
+@spin_it("Getting issues")
+def get_sprint_issues(jira: JIRA, sprint: Sprint) -> Result:
+    issues = _get_sprint_issues(jira, sprint)
+    return Result(result=issues, stdout=":")
+
+
+# TODO: catch errors and properly process them in Result (stderr?)
 @spin_it("Adding worklog")
 def add_worklog(jira: JIRA, **payload) -> Result:
-    issue, time, seconds, comment = itemgetter("issue", "time", "seconds", "comment")(payload)
+    issue, time, seconds, comment = itemgetter("issue", "time", "seconds", "comment")(
+        payload
+    )
 
     work_log = jira.add_worklog(
         issue=issue, timeSpent=time, timeSpentSeconds=seconds, comment=comment
@@ -169,16 +200,24 @@ def add_worklog(jira: JIRA, **payload) -> Result:
 def get_worklog(jira: JIRA, **payload) -> Worklog:
     if work_log := jira.worklog(issue=payload["issue"], id=str(payload["worklog_id"])):
         return work_log
-    raise Exception(f"could not find worklog {payload['worklog_id']} for issue {payload['issue']!r}")
+    raise Exception(
+        f"could not find worklog {payload['worklog_id']} for issue {payload['issue']!r}"
+    )
+
+
+def _update_worklog(worklog: Worklog, payload: dict) -> None:
+    time, comment = itemgetter("time", "comment")(payload)
+    if not (time or comment):
+        raise Exception(
+            "at least one of <time> or <comment> fields needed to perform the update!"
+        )
+    fields = {k: v for k, v in zip(["timeSpent", "comment"], [time, comment]) if v}
+    worklog.update(fields=fields)
 
 
 @spin_it("Updating worklog")
 def update_worklog(worklog: Worklog, **payload) -> Result:
-    time, comment = itemgetter("time", "comment")(payload)
-    if not (time or comment):
-        raise Exception(f"at least one of <time> or <comment> fields needed to perform the update!")
-    fields = {k: v for k, v in zip(["timeSpent", "comment"], [time, comment]) if v}
-    worklog.update(fields=fields)
+    _update_worklog(worklog, payload)
     return Result(stdout=f": {worklog.id} updated!")
 
 
@@ -186,19 +225,24 @@ def update_worklog(worklog: Worklog, **payload) -> Result:
 #  CLI wrapper
 ##################################################
 
+
 @click.group()
 @click.option("-f", "--file", help=f"Config file path", type=click.File())
 @click.option("-o", "--board", help="JIRA_BOARD value", envvar="JIRA_BOARD")
 @click.option("-k", "--token", help="JIRA_TOKEN value", envvar="JIRA_TOKEN")
 @click.option("-m", "--email", help="JIRA_EMAIL value", envvar="JIRA_EMAIL")
 @click.option("-d", "--server", help="JIRA_SERVER value", envvar="JIRA_SERVER")
+@click.option("--spin/--no-spin", help="Control the spinner", default=True)
+@click.help_option("-h", "--help")
 @click.pass_context
-def cli(ctx, file, board, token, email, server):
+def cli(ctx, file, board, token, email, server, spin):
     """
     Configure JIRA connection by using config files
     (XDG_CONFIG_HOME/dzira/env or ~/.dzira),
     environment variables, or options below:
     """
+    global use_spinner; use_spinner = spin
+
     ctx.ensure_object(dict)
     cfg = {
         k: v
@@ -218,29 +262,39 @@ def cli(ctx, file, board, token, email, server):
 #  LS command
 ##################################################
 
-def get_current_sprint_with_issues(config: dict) -> tuple[Sprint, list, Board]:
+
+def get_current_sprint_with_issues(config: dict) -> list[Issue]:
     config = get_config(config=config)
     jira = get_jira(config).result
     board = get_board_by_name(jira, get_board_name(config)).result
-    sprint = get_current_sprint(jira, board)
-    return sprint, get_sprint_issues(jira, sprint), board
+    sprint = get_current_sprint(jira, board).result
+    return get_sprint_issues(jira, sprint).result
 
 
 def show_issues(issues: list) -> None:
     fmt = lambda t: timedelta(seconds=t) if t else None
-    state_clr = {"To Do": "purple", "In Progress": "yellow", "Done": "green"}
-    clr = lambda s: C[state_clr.get(s, "reset")] + C["bold"] + s + C["reset"]
+    state_clr = {"To Do": "^magenta", "In Progress": "^yellow", "Done": "^green"}
+    clr = lambda s: c(state_clr.get(s, "^reset"), "^bold", s)
+    # breakpoint()
+
+    def estimate(i):
+        try:
+            remining = i.fields.timetracking.remainingEstimate
+            original = i.fields.timetracking.originalEstimate
+            return f"{remining} ({original})" if remining != original else original
+        except Exception:
+            return fmt(i.fields.timeestimate)
+
     issues = [
         (
-            C["blue"] + i.key + C["reset"],
+            c("^blue", i.key),
             i.fields.summary,
             clr(i.fields.status.name),
             fmt(i.fields.timespent),
-            fmt(i.fields.timeestimate),
+            estimate(i),
         )
         for i in reversed(sorted(issues, key=lambda i: i.fields.status.name))
     ]
-
     print(
         tabulate(
             issues,
@@ -248,30 +302,28 @@ def show_issues(issues: list) -> None:
             colalign=("right", "left", "left", "right", "right"),
             maxcolwidths=[None, 35, None, None, None],
             tablefmt="grid",
-        ),
-        flush=True
+        )
     )
 
 
-def show_sprint_info(sprint: Sprint, board: Board) -> None:
-    project = board.raw["location"]["projectName"]
-    fmt = lambda d: datetime.strptime(d, "%Y-%m-%dT%H:%M:%S.%fZ").strftime("%a, %b %d")
-    print(
-        f"\n{C['bold']}  {sprint.name} by {project}{C['reset']} "
-        f"[{fmt(sprint.startDate)} -> {fmt(sprint.endDate)}]\n",
-        flush=True
-    )
+# def show_sprint_info(sprint: Sprint, board: Board) -> None:
+#     project = board.raw["location"]["projectName"]
+#     fmt = lambda d: datetime.strptime(d, "%Y-%m-%dT%H:%M:%S.%fZ").strftime("%a, %b %d")
+#     print(
+#         f"\n{C['bold']}  {sprint.name} by {project}{C['reset']} "
+#         f"[{fmt(sprint.startDate)} -> {fmt(sprint.endDate)}]\n",
+#         flush=True,
+#     )
 
 
 @cli.command()
 @click.pass_context
+@click.help_option("-h", "--help")
 def ls(ctx):
     """
     List issues from the current sprint
     """
-    sprint, issues, board = get_current_sprint_with_issues(ctx.obj)
-    show_sprint_info(sprint, board)
-    show_issues(issues)
+    show_issues(get_current_sprint_with_issues(ctx.obj))
 
 
 ##################################################
@@ -279,6 +331,7 @@ def ls(ctx):
 ##################################################
 
 ### Validators
+
 
 def is_valid_time(time: str) -> bool:
     return (
@@ -314,7 +367,9 @@ def validate_hour(ctx, param, value):
 
 
 def check_params(**args) -> None:
-    time, start, worklog_id, comment = itemgetter("time", "start", "worklog_id", "comment")(args)
+    time, start, worklog_id, comment = itemgetter(
+        "time", "start", "worklog_id", "comment"
+    )(args)
 
     if (time or start) or (worklog_id and comment):
         return
@@ -331,26 +386,32 @@ def check_params(**args) -> None:
 
 ### Payload
 
-def calculate_seconds(**payload) -> str | None:
+
+def calculate_seconds(**payload) -> dict:
     start, end = itemgetter("start", "end")(payload)
 
     if start is None:
-        return
+        return payload
 
-    t2 = datetime.now() if end is None else datetime.strptime(re.sub(r"[,.h]", ":", end), "%H:%M")
+    t2 = (
+        datetime.now()
+        if end is None
+        else datetime.strptime(re.sub(r"[,.h]", ":", end), "%H:%M")
+    )
     t1 = datetime.strptime(re.sub(r"[,.h]", ":", start), "%H:%M")
 
     if t2 < t1:
         raise click.BadParameter("start time cannot be later than end time")
     else:
         delta_seconds = (t2 - t1).total_seconds()
-        return str(int(delta_seconds))
+        payload["seconds"] = str(int(delta_seconds))
+        return payload
 
 
-def prepare_payload(**payload) -> dict:
-    # if not payload["time"] and payload["start"]:
-    payload["seconds"] = calculate_seconds(**payload)
-    return payload
+# def prepare_payload(**payload) -> dict:
+#     # if not payload["time"] and payload["start"]:
+#     payload["seconds"] = calculate_seconds(**payload)
+#     return payload
 
 
 def establish_issue(jira: JIRA, config: dict, issue: str) -> str:
@@ -361,7 +422,7 @@ def establish_issue(jira: JIRA, config: dict, issue: str) -> str:
 
     jira_board = get_board_by_name(jira, board).result
     sprint = get_current_sprint(jira, jira_board)
-    sprint_issues = get_sprint_issues(jira, sprint)
+    sprint_issues = get_sprint_issues(jira, sprint.result).result
     candidates = [i for i in sprint_issues if issue.lower() in i.fields.summary.lower()]
 
     if not candidates:
@@ -410,6 +471,8 @@ def establish_action(jira: JIRA, **payload) -> Callable:
 @click.option(
     "-w", "--worklog", "worklog_id", type=int, help="Id of the worklog to be updated"
 )
+@click.option("--spin/--no-spin", default=True)
+@click.help_option("-h", "--help")
 def log(ctx, issue, **rest):
     """
     Log time spent on ISSUE number or ISSUE with description containing
@@ -427,7 +490,7 @@ def log(ctx, issue, **rest):
     """
     check_params(**rest)
 
-    payload = prepare_payload(**ctx.params)
+    payload = calculate_seconds(**ctx.params)
     config = get_config(config=ctx.obj)
     jira = get_jira(config).result
     payload["issue"] = establish_issue(jira, config, issue)
@@ -446,3 +509,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+# -*- python-indent-offset: 4 -*-
