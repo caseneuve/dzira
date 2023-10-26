@@ -160,7 +160,6 @@ def get_sprints(jira: JIRA, board: Board, state: str = "active") -> list:
 def get_current_sprint(jira: JIRA, board: Board) -> Result:
     sprint = get_sprints(jira, board)[0]
     fmt = lambda d: datetime.strptime(d, "%Y-%m-%dT%H:%M:%S.%fZ").strftime("%a, %b %d")
-    print("asdfsdaf")
     return Result(
         result=sprint,
         stdout=f": {sprint.name} [{fmt(sprint.startDate)} -> {fmt(sprint.endDate)}]",
