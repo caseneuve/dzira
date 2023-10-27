@@ -324,15 +324,14 @@ class TestGetSprintIssuesPublic:
 
 
 class TestAddWorklog:
-    def test_calls_jira_add_worklog_with_provided_values(self, mocker):
+    def test_calls_jira_add_worklog_with_provided_values(self):
         mock_worklog = Mock(raw={"timeSpent": "2h"}, issueId="123", id=321)
         mock_jira = Mock(add_worklog=Mock(return_value=mock_worklog))
-        mock_print = mocker.patch("dzira.dzira.print")
 
-        add_worklog(mock_jira, "333", time="2h")
-        add_worklog(mock_jira, "333", seconds=f"{60 * 60 * 2}", comment="blah!")
+        result1 = add_worklog(mock_jira, "333", time="2h")
+        result2 = add_worklog(mock_jira, "333", seconds=f"{60 * 60 * 2}", comment="blah!")
 
-        assert mock_jira.add_worklog.has_calls(
+        assert mock_jira.add_worklog.call_args_list == (
             [
                 call(issue="333", timeSpent="2h", timeSpentSeconds=None, comment=None),
                 call(
@@ -343,13 +342,8 @@ class TestAddWorklog:
                 ),
             ]
         )
-
-        assert mock_print.has_calls(
-            [
-                call("Spent 2h in 333 (123) [worklog 321]"),
-                call("Spent 2h in 333 (123) [worklog 321]"),
-            ]
-        )
+        assert "spent 2h in 333 [worklog 321]" in result1.stdout
+        assert "spent 2h in 333 [worklog 321]" in result2.stdout
 
 
 class TestGetWorklog:
