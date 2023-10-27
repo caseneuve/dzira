@@ -213,7 +213,7 @@ def add_worklog(jira: JIRA, issue, time=None, comment=None, seconds=None, **_) -
     )
 
 
-def get_worklog(jira: JIRA, issue: str, worklog_id: str, **_) -> Worklog:
+def get_worklog(jira: JIRA, issue: str, worklog_id: str | int, **_) -> Worklog:
     if work_log := jira.worklog(issue=issue, id=str(worklog_id)):
         return work_log
     raise Exception(f"could not find worklog {worklog_id} for issue {issue!r}")
