@@ -12,7 +12,7 @@ dependencies = [
     "tabulate",
 ]
 authors = [
-    { name="Piotr Kaznowski", email="piotr@kazno.com" },
+    { name="Piotr Kaznowski", email="piotr@kazno.dev" },
 ]
 description = "A cli wrapper for jira API to track sprints and manage worklogs"
 readme = "README.md"
