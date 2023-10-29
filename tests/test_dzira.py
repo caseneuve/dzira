@@ -8,8 +8,8 @@ from click.testing import CliRunner
 
 from src.dzira.dzira import (
     CONFIG_DIR_NAME,
-    DOTFILE,
     D,
+    DOTFILE,
     Result,
     _get_board_by_name,
     _update_worklog,

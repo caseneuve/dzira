@@ -1,15 +1,15 @@
 from __future__ import annotations
-import concurrent.futures
-from dataclasses import dataclass
 import os
 import re
 import sys
 import time
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from functools import wraps
 from itertools import cycle
 from pathlib import Path
 from typing import Any, Iterable
+import concurrent.futures
 
 import click
 from dotenv import dotenv_values
