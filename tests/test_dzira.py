@@ -1,5 +1,4 @@
 import os
-import pathlib
 import sys
 from unittest.mock import Mock, PropertyMock, call, patch, sentinel
 
@@ -7,7 +6,7 @@ import pytest
 import click
 from click.testing import CliRunner
 
-from dzira.dzira import (
+from src.dzira.dzira import (
     CONFIG_DIR_NAME,
     DOTFILE,
     D,
@@ -44,7 +43,7 @@ from dzira.dzira import (
 
 @pytest.fixture
 def config(mocker):
-    mock_dotenv_values = mocker.patch("dzira.dzira.dotenv_values")
+    mock_dotenv_values = mocker.patch("src.dzira.dzira.dotenv_values")
     mock_dotenv_values.return_value = {
         "JIRA_SERVER": "foo.bar.com",
         "JIRA_EMAIL": "name@example.com",
@@ -132,21 +131,33 @@ class TestSpinIt:
 
 class TestGetConfigFromFile:
     def test_looks_for_config_file_in_default_locations_when_path_not_provided(
-        self, mocker, config
+        self, mocker
     ):
         mocker.patch.dict(os.environ, {"HOME": "/home/foo"}, clear=True)
-        mock_env_get = mocker.patch("dzira.dzira.os.environ.get")
-        mock_path = mocker.patch("dzira.dzira.Path")
+        mock_env_get = mocker.patch("src.dzira.dzira.os.environ.get")
+        mock_os_path = mocker.patch("src.dzira.dzira.os.path")
+        mock_dotenv_values = mocker.patch("src.dzira.dzira.dotenv_values")
 
         get_config_from_file()
 
         mock_env_get.assert_called_once_with("XDG_CONFIG_HOME", "/home/foo")
-        mock_path.assert_called_once_with(mock_env_get.return_value)
-        assert mock_path.return_value.__truediv__.call_args_list == [
-            call(CONFIG_DIR_NAME),
-            call(DOTFILE),
+        assert mock_os_path.join.call_args_list == [
+            call(mock_env_get.return_value, CONFIG_DIR_NAME, "env"),
+            call(mock_env_get.return_value, DOTFILE),
+            call(os.environ["HOME"], ".config", CONFIG_DIR_NAME, "env"),
+            call(os.environ["HOME"], ".config", DOTFILE)
         ]
-        assert mock_path.is_file.call_args_list == []
+        mock_dotenv_values.assert_called_once()
+
+    def test_picks_up_first_matching_path_when_no_file_provided(self, mocker):
+        mocker.patch.dict(os.environ, {"HOME": "/home/foo"}, clear=True)
+        mock_os_path_isfile = mocker.patch("src.dzira.dzira.os.path.isfile")
+        mock_os_path_isfile.side_effect = [False, True]
+        mock_dotenv_values = mocker.patch("src.dzira.dzira.dotenv_values")
+
+        get_config_from_file()
+
+        mock_dotenv_values.assert_called_once_with(f"/home/foo/{DOTFILE}")
 
     def test_looks_for_config_file_in_provided_location(self, config):
         mock_dotenv_values = config
@@ -156,15 +167,15 @@ class TestGetConfigFromFile:
         mock_dotenv_values.assert_called_once_with(sentinel.path)
 
     def test_returns_empty_dict_when_no_file_found(self, mocker):
-        mocker.patch.object(pathlib.Path, "is_file", lambda _: False)
+        mocker.patch("src.dzira.dzira.os.path.isfile", lambda _: False)
 
         result = get_config_from_file()
 
         assert result == {}
 
 
-@patch("dzira.dzira.REQUIRED_KEYS", ("FOO", "BAR", "BAZ"))
-@patch("dzira.dzira.get_config_from_file")
+@patch("src.dzira.dzira.REQUIRED_KEYS", ("FOO", "BAR", "BAZ"))
+@patch("src.dzira.dzira.get_config_from_file")
 class TestGetConfig:
     def test_uses_user_provided_values_entirely(self, mock_config_from_file):
         override_conf = {"FOO": "123", "BAR": "abc", "BAZ": "zab"}
@@ -207,7 +218,7 @@ class TestGetConfig:
 class TestGetJira:
     def test_jira_is_instantiated_with_provided_config_values(self, config, mocker):
         cfg = config()
-        mock_get_jira = mocker.patch("dzira.dzira.JIRA")
+        mock_get_jira = mocker.patch("src.dzira.dzira.JIRA")
 
         get_jira(cfg)
 
@@ -246,7 +257,7 @@ class TestGetBoardByNamePublic:
 
     def test_calls_private_function_and_wraps_the_result(self, mocker):
         mock_jira = Mock()
-        mock_private = mocker.patch("dzira.dzira._get_board_by_name")
+        mock_private = mocker.patch("src.dzira.dzira._get_board_by_name")
         board = Mock(raw={"location": {"displayName": "Foo"}})
         mock_private.return_value = board
 
@@ -293,7 +304,7 @@ class TestGetCurrentSprint:
         assert get_current_sprint.is_decorated_with_spin_it
 
     def test_calls_returns_wrapped_first_sprint_from_get_sprints(self, mocker):
-        mock_get_sprints = mocker.patch("dzira.dzira.get_sprints")
+        mock_get_sprints = mocker.patch("src.dzira.dzira.get_sprints")
         mock_sprint = Mock(
             name="Foo",
             startDate="1410-07-14T12:00:00.00Z",
@@ -314,7 +325,7 @@ class TestGetSprintIssuesPublic:
         assert get_sprint_issues.is_decorated_with_spin_it
 
     def test_calls_private_function_and_wraps_the_result(self, mocker):
-        mock_private = mocker.patch("dzira.dzira._get_sprint_issues")
+        mock_private = mocker.patch("src.dzira.dzira._get_sprint_issues")
 
         result = get_sprint_issues(sentinel.jira, sentinel.sprint)
 
@@ -390,7 +401,7 @@ class TestUpdateWorklogPublic:
 
     def test_calls_private_function_and_wraps_the_result(self, mocker):
         mock_worklog = Mock(id="42")
-        mock_private = mocker.patch("dzira.dzira._update_worklog")
+        mock_private = mocker.patch("src.dzira.dzira._update_worklog")
 
         result = update_worklog(mock_worklog, time="2h", comment="blah!")
 
@@ -406,7 +417,7 @@ class TestCalculateSeconds:
         assert calculate_seconds(input) == input
 
     def test_uses_current_time_if_only_start_parameter_provided(self, mocker):
-        mock_datetime = mocker.patch("dzira.dzira.datetime")
+        mock_datetime = mocker.patch("src.dzira.dzira.datetime")
         mock_datetime.strptime.return_value.__gt__ = Mock(return_value=False)
 
         calculate_seconds(D(start="9.00"))
@@ -428,8 +439,8 @@ class TestCalculateSeconds:
         assert calculate_seconds(D(start=start, end=end))["seconds"] == expected
 
     def test_accepts_multiple_separators_in_input(self, mocker):
-        mock_sub = mocker.patch("dzira.dzira.re.sub")
-        mock_datetime = mocker.patch("dzira.dzira.datetime")
+        mock_sub = mocker.patch("src.dzira.dzira.re.sub")
+        mock_datetime = mocker.patch("src.dzira.dzira.datetime")
         mock_datetime.strptime.return_value.__gt__ = Mock(return_value=False)
 
         calculate_seconds(D(start="2,10", end="3.01"))
@@ -443,7 +454,7 @@ class TestCalculateSeconds:
         ]
 
     def test_raises_when_end_time_prior_than_start_time(self, mocker):
-        mock_datetime = mocker.patch("dzira.dzira.datetime")
+        mock_datetime = mocker.patch("src.dzira.dzira.datetime")
         mock_datetime.strptime.return_value.__gt__ = Mock(return_value=True)
 
         with pytest.raises(click.BadParameter) as exc_info:
@@ -454,13 +465,13 @@ class TestCalculateSeconds:
 
 class TestGetCurrentSprintWithIssues:
     def test_runs_with_config_from_file_by_default(self, mocker):
-        mock_get_config = mocker.patch("dzira.dzira.get_config")
+        mock_get_config = mocker.patch("src.dzira.dzira.get_config")
         mock_config = mock_get_config.return_value
-        mock_get_jira = mocker.patch("dzira.dzira.get_jira")
-        mock_get_board_name = mocker.patch("dzira.dzira.get_board_name")
-        mock_get_board_by_name = mocker.patch("dzira.dzira.get_board_by_name")
-        mock_get_current_sprint = mocker.patch("dzira.dzira.get_current_sprint")
-        mock_get_sprint_issues = mocker.patch("dzira.dzira.get_sprint_issues")
+        mock_get_jira = mocker.patch("src.dzira.dzira.get_jira")
+        mock_get_board_name = mocker.patch("src.dzira.dzira.get_board_name")
+        mock_get_board_by_name = mocker.patch("src.dzira.dzira.get_board_by_name")
+        mock_get_current_sprint = mocker.patch("src.dzira.dzira.get_current_sprint")
+        mock_get_sprint_issues = mocker.patch("src.dzira.dzira.get_sprint_issues")
         jira = mock_get_jira.return_value.result
         board = mock_get_board_by_name.return_value.result
         sprint = mock_get_current_sprint.return_value.result
@@ -498,10 +509,10 @@ class TestLs:
 
     def test_happy_run(self, mocker):
         mock_get_current_sprint_with_issues = mocker.patch(
-            "dzira.dzira.get_current_sprint_with_issues"
+            "src.dzira.dzira.get_current_sprint_with_issues"
         )
         mock_get_current_sprint_with_issues.return_value = sentinel.issues
-        mock_show_issues = mocker.patch("dzira.dzira.show_issues")
+        mock_show_issues = mocker.patch("src.dzira.dzira.show_issues")
 
         result = runner.invoke(cli, ["--token", "foo", "ls"])
 
@@ -512,7 +523,7 @@ class TestLs:
         )
 
     @patch.dict(os.environ, {"JIRA_BOARD": "XYZ"}, clear=True)
-    @patch("dzira.dzira.get_current_sprint_with_issues")
+    @patch("src.dzira.dzira.get_current_sprint_with_issues")
     def test_has_access_to_context_provided_by_cli_group(self, mock_get_current_sprint_with_issues):
         runner.invoke(cli, ["--email", "foo@bar.com", "ls"])
 
@@ -557,7 +568,7 @@ class TestCorrectTimeFormats:
         assert expected == is_valid_hour(input)
 
 
-@patch("dzira.dzira.is_valid_time")
+@patch("src.dzira.dzira.is_valid_time")
 class TestValidateTime:
     def test_passes_when_time_is_none(self, mock_is_valid_time):
         result = validate_time(Mock(), Mock(), None)
@@ -583,7 +594,7 @@ class TestValidateTime:
         assert "time has" in str(exc_info)
 
 
-@patch("dzira.dzira.is_valid_hour")
+@patch("src.dzira.dzira.is_valid_hour")
 class TestValidateHour:
     def test_raises_when_end_hour_without_start_hour_or_time_spent(
         self, mock_is_valid_hour
@@ -650,7 +661,7 @@ class TestSanitizeParams:
         "args", [D(time="42m"), D(start="8:30"), D(worklog_id="999", comment="asdf")]
     )
     def test_updates_seconds_when_proper_args_provided(self, mocker, args):
-        mock_calculate_seconds = mocker.patch("dzira.dzira.calculate_seconds")
+        mock_calculate_seconds = mocker.patch("src.dzira.dzira.calculate_seconds")
 
         result = sanitize_params(args)
 
@@ -658,10 +669,10 @@ class TestSanitizeParams:
         assert result == mock_calculate_seconds.return_value
 
 
-@patch("dzira.dzira.get_sprint_issues")
-@patch("dzira.dzira.get_current_sprint")
-@patch("dzira.dzira.get_board_by_name")
-@patch("dzira.dzira.get_board_name")
+@patch("src.dzira.dzira.get_sprint_issues")
+@patch("src.dzira.dzira.get_current_sprint")
+@patch("src.dzira.dzira.get_board_by_name")
+@patch("src.dzira.dzira.get_board_name")
 class TestEstablishIssue:
     def test_returns_early_if_issue_is_digits_and_board_provided(
         self,
@@ -739,8 +750,8 @@ class TestEstablishIssue:
 
 class TestLogAction:
     def test_returns_update_worklog_if_worklog_id_provided(self, mocker):
-        mock_get_worklog = mocker.patch("dzira.dzira.get_worklog")
-        mock_update_worklog = mocker.patch("dzira.dzira.update_worklog")
+        mock_get_worklog = mocker.patch("src.dzira.dzira.get_worklog")
+        mock_update_worklog = mocker.patch("src.dzira.dzira.update_worklog")
         payload = D(issue=sentinel.issue, worklog_id=sentinel.worklog)
 
         perform_log_action(sentinel.jira, payload)
@@ -754,8 +765,8 @@ class TestLogAction:
         )
 
     def test_returns_add_worklog_if_worklog_id_not_provided(self, mocker):
-        mock_get_worklog = mocker.patch("dzira.dzira.get_worklog")
-        mock_add_worklog = mocker.patch("dzira.dzira.add_worklog")
+        mock_get_worklog = mocker.patch("src.dzira.dzira.get_worklog")
+        mock_add_worklog = mocker.patch("src.dzira.dzira.add_worklog")
         payload = D(issue=sentinel.issue, worklog_id=None)
 
         perform_log_action(sentinel.jira, payload)
@@ -774,12 +785,12 @@ class TestLog:
         mocker.patch.dict(
             os.environ, {"JIRA_TOKEN": "token", "JIRA_EMAIL": "email"}, clear=True
         )
-        mock_d = mocker.patch("dzira.dzira.D")
-        mock_sanitize_params = mocker.patch("dzira.dzira.sanitize_params")
-        mock_get_config = mocker.patch("dzira.dzira.get_config")
-        mock_get_jira = mocker.patch("dzira.dzira.get_jira")
-        mock_establish_issue = mocker.patch("dzira.dzira.establish_issue")
-        mock_perform_log_action = mocker.patch("dzira.dzira.perform_log_action")
+        mock_d = mocker.patch("src.dzira.dzira.D")
+        mock_sanitize_params = mocker.patch("src.dzira.dzira.sanitize_params")
+        mock_get_config = mocker.patch("src.dzira.dzira.get_config")
+        mock_get_jira = mocker.patch("src.dzira.dzira.get_jira")
+        mock_establish_issue = mocker.patch("src.dzira.dzira.establish_issue")
+        mock_perform_log_action = mocker.patch("src.dzira.dzira.perform_log_action")
         mock_jira = mock_get_jira.return_value.result
         mock_config = mock_get_config.return_value
 
@@ -801,18 +812,18 @@ class TestLog:
 
 class TestMain:
     def test_runs_cli(self, mocker):
-        mock_cli = mocker.patch("dzira.dzira.cli")
+        mock_cli = mocker.patch("src.dzira.dzira.cli")
 
         main()
 
         mock_cli.assert_called_once()
 
     def test_catches_exceptions_and_exits(self, mocker):
-        mock_cli = mocker.patch("dzira.dzira.cli")
+        mock_cli = mocker.patch("src.dzira.dzira.cli")
         exc = Exception("foo")
         mock_cli.side_effect = exc
-        mock_print = mocker.patch("dzira.dzira.print")
-        mock_exit = mocker.patch("dzira.dzira.sys.exit")
+        mock_print = mocker.patch("src.dzira.dzira.print")
+        mock_exit = mocker.patch("src.dzira.dzira.sys.exit")
 
         main()
 

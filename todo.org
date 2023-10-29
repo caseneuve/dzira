@@ -1,0 +1,13 @@
+* TODO spending with -s while updating a log
+
+* TODO using only -s like =-s12.00= which produced =13:43:36  Spent 27036w 3d 1h 43m in PA-107...=
+
+* DONE add spinner (as decorator on get jira and establish issue + action)
+
+* TODO test on multiple platforms: [0/2]
+
+- [ ] MacOS
+- [ ] Windows
+
+* TODO add Docker tests for installing the package with pip, possibly on all OS images
+  

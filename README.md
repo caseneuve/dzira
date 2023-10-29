@@ -5,17 +5,30 @@
 ```
 Usage: dzira.py [OPTIONS] COMMAND [ARGS]...
 
-  Configure JIRA connection by using config files (XDG_CONFIG_HOME/dzira/env
-  or ~/.dzira), environment variables, or options below:
+  Configure JIRA connection by using default config files, environment
+  variables, or options below. The discovery of default config files uses
+  paths in the following order:
+
+  - $XDG_CONFIG_HOME or $HOME/dzira/env
+  - $XDG_CONFIG_HOME or $HOME/.dzira
+  - $HOME/.config/dzira/env
+  - $HOME/.config/.dzira
+
+  Configuration requires setting values for:
+
+  - JIRA_SERVER (the servers where your Jira instance is hosted on),
+  - JIRA_EMAIL (the email you use to log into Jira),
+  - JIRA_TOKEN (your Jira token),
+  - JIRA_BOARD (the default Jira board to use)
 
 Options:
-  -f, --file FILENAME  Config file path
-  -o, --board TEXT     JIRA_BOARD value
-  -k, --token TEXT     JIRA_TOKEN value
-  -m, --email TEXT     JIRA_EMAIL value
-  -d, --server TEXT    JIRA_SERVER value
-  --spin / --no-spin   Control the spinner
-  --help               Show this message and exit.
+  -f, --file PATH     Config file path
+  -o, --board TEXT    JIRA_BOARD value
+  -k, --token TEXT    JIRA_TOKEN value
+  -m, --email TEXT    JIRA_EMAIL value
+  -d, --server TEXT   JIRA_SERVER value
+  --spin / --no-spin  Control the spinner
+  -h, --help          Show this message and exit.
 
 Commands:
   log  Log time spent on ISSUE number or ISSUE with description...

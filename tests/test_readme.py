@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
-from dzira.dzira import cli
+from src.dzira.dzira import cli
 
 runner = CliRunner()
 

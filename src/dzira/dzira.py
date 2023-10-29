@@ -108,12 +108,14 @@ def spin_it(msg="", done="✓", fail="✗"):
 
 def get_config_from_file(config_file: str | Path | None = None) -> dict:
     if config_file is None:
-        config_file_dir = Path(os.environ.get("XDG_CONFIG_HOME", os.environ["HOME"]))
+        config_file_dir = os.environ.get("XDG_CONFIG_HOME", os.environ["HOME"])
         for path in (
-            (config_file_dir / CONFIG_DIR_NAME / "env"),
-            (config_file_dir / DOTFILE),
+                os.path.join(config_file_dir, CONFIG_DIR_NAME, "env"),
+                os.path.join(config_file_dir, DOTFILE),
+                os.path.join(os.environ["HOME"], ".config", CONFIG_DIR_NAME, "env"),
+                os.path.join(os.environ["HOME"], ".config", DOTFILE),
         ):
-            if path.is_file():
+            if os.path.isfile(path):
                 config_file = path
                 break
 
@@ -240,7 +242,7 @@ def update_worklog(worklog: Worklog, time: str, comment: str, **_) -> Result:
 
 
 @click.group()
-@click.option("-f", "--file", help=f"Config file path", type=click.File())
+@click.option("-f", "--file", help=f"Config file path", type=click.Path())
 @click.option("-o", "--board", help="JIRA_BOARD value", envvar="JIRA_BOARD")
 @click.option("-k", "--token", help="JIRA_TOKEN value", envvar="JIRA_TOKEN")
 @click.option("-m", "--email", help="JIRA_EMAIL value", envvar="JIRA_EMAIL")
@@ -250,9 +252,23 @@ def update_worklog(worklog: Worklog, time: str, comment: str, **_) -> Result:
 @click.pass_context
 def cli(ctx, file, board, token, email, server, spin):
     """
-    Configure JIRA connection by using config files
-    (XDG_CONFIG_HOME/dzira/env or ~/.dzira),
-    environment variables, or options below:
+    Configure JIRA connection by using default config files, environment
+    variables, or options below. The discovery of default config files uses
+    paths in the following order:
+
+    \b
+    - $XDG_CONFIG_HOME or $HOME/dzira/env
+    - $XDG_CONFIG_HOME or $HOME/.dzira
+    - $HOME/.config/dzira/env
+    - $HOME/.config/.dzira
+
+    Configuration requires setting values for:
+
+    \b
+    - JIRA_SERVER (the servers where your Jira instance is hosted on),
+    - JIRA_EMAIL (the email you use to log into Jira),
+    - JIRA_TOKEN (your Jira token),
+    - JIRA_BOARD (the default Jira board to use)
     """
     global use_spinner; use_spinner = spin
 
