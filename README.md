@@ -63,6 +63,14 @@ is equivalent to:
 `JIRA_BOARD=XYZ python dzira.py ...`
 
 
+## Creating an API jira token
+
+Once you're logged into your Jira instance, click on the profile icon (the upper
+right corner), choose `Manage account`, then `Security` from the top menu and
+`Create and manage API tokens` from the **API tokens** section, and lastly use
+`Create API token` button.
+
+
 # Commands
 
 ## `ls` commmand
