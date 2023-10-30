@@ -41,7 +41,7 @@ Commands:
 Create file `$XDG_CONFIG_HOME/dzira/env` (usually `~/.config/dzira/env`) 
 or `$HOME/.dzira` (`~/.dzira`) with contents:
 
-```sh
+```text
 JIRA_EMAIL=<your email used for Jira API>
 JIRA_TOKEN=<your Jira API token>
 JIRA_SERVER=<your Jira instance server name>
