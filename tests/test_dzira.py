@@ -131,12 +131,12 @@ class TestSpinIt:
 
 class TestGetConfigFromFile:
     def test_looks_for_config_file_in_default_locations_when_path_not_provided(
-        self, mocker
+            self, mocker, config
     ):
         mocker.patch.dict(os.environ, {"HOME": "/home/foo"}, clear=True)
         mock_env_get = mocker.patch("src.dzira.dzira.os.environ.get")
         mock_os_path = mocker.patch("src.dzira.dzira.os.path")
-        mock_dotenv_values = mocker.patch("src.dzira.dzira.dotenv_values")
+        mock_dotenv_values = config
 
         get_config_from_file()
 
@@ -149,11 +149,11 @@ class TestGetConfigFromFile:
         ]
         mock_dotenv_values.assert_called_once()
 
-    def test_picks_up_first_matching_path_when_no_file_provided(self, mocker):
+    def test_picks_up_first_matching_path_when_no_file_provided(self, mocker, config):
         mocker.patch.dict(os.environ, {"HOME": "/home/foo"}, clear=True)
         mock_os_path_isfile = mocker.patch("src.dzira.dzira.os.path.isfile")
         mock_os_path_isfile.side_effect = [False, True]
-        mock_dotenv_values = mocker.patch("src.dzira.dzira.dotenv_values")
+        mock_dotenv_values = config
 
         get_config_from_file()
 
@@ -217,14 +217,13 @@ class TestGetConfig:
 
 class TestGetJira:
     def test_jira_is_instantiated_with_provided_config_values(self, config, mocker):
-        cfg = config()
         mock_get_jira = mocker.patch("src.dzira.dzira.JIRA")
 
-        get_jira(cfg)
+        get_jira(config)
 
         mock_get_jira.assert_called_once_with(
-            server=f"https://{cfg['JIRA_SERVER']}",
-            basic_auth=(cfg["JIRA_EMAIL"], cfg["JIRA_TOKEN"]),
+            server=f"https://{config['JIRA_SERVER']}",
+            basic_auth=(config["JIRA_EMAIL"], config["JIRA_TOKEN"]),
         )
 
 
