@@ -38,6 +38,14 @@ def c(*args):
     return "".join([C.get(a, a) for a in args]) + C["^reset"]
 
 
+def hide_cursor():
+    print("\033[?25l", end="", flush=True)
+
+
+def show_cursor():
+    print("\033[?25h", end="", flush=True)
+
+
 @dataclass
 class Result:
     result: Any = None
@@ -506,10 +514,13 @@ def log(ctx, **_):
 
 def main():
     try:
+        hide_cursor()
         cli()
     except Exception as e:
         print(e, file=sys.stderr)
         sys.exit(1)
+    finally:
+        show_cursor()
 
 
 if __name__ == "__main__":

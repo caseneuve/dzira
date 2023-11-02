@@ -28,6 +28,7 @@ from src.dzira.dzira import (
     get_sprint_issues,
     get_sprints,
     get_worklog,
+    hide_cursor,
     is_valid_hour,
     is_valid_time,
     log,
@@ -35,6 +36,7 @@ from src.dzira.dzira import (
     main,
     perform_log_action,
     sanitize_params,
+    show_cursor,
     update_worklog,
     validate_hour,
     validate_time,
@@ -82,6 +84,22 @@ class TestC:
     )
     def test_is_variadic(self, test_input, expected):
         assert c(*test_input) == expected
+
+
+class TestCursorHelpers:
+    def test_hides_cursor(self, mocker):
+        mock_print = mocker.patch("src.dzira.dzira.print")
+
+        hide_cursor()
+
+        mock_print.assert_called_once_with("\033[?25l", end="", flush=True)
+
+    def test_shows_cursor(self, mocker):
+        mock_print = mocker.patch("src.dzira.dzira.print")
+
+        show_cursor()
+
+        mock_print.assert_called_once_with("\033[?25h", end="", flush=True)
 
 
 class TestResult:
@@ -818,6 +836,8 @@ class TestMain:
         mock_cli.assert_called_once()
 
     def test_catches_exceptions_and_exits(self, mocker):
+        mocker.patch("src.dzira.dzira.hide_cursor")
+        mocker.patch("src.dzira.dzira.show_cursor")
         mock_cli = mocker.patch("src.dzira.dzira.cli")
         exc = Exception("foo")
         mock_cli.side_effect = exc
@@ -828,3 +848,13 @@ class TestMain:
 
         mock_print.assert_called_once_with(exc, file=sys.stderr)
         mock_exit.assert_called_once_with(1)
+
+    def test_hides_and_shows_the_cursor(self, mocker):
+        mocker.patch("src.dzira.dzira.cli")
+        mock_hide = mocker.patch("src.dzira.dzira.hide_cursor")
+        mock_show = mocker.patch("src.dzira.dzira.show_cursor")
+
+        main()
+
+        mock_hide.assert_called_once()
+        mock_show.assert_called_once()
