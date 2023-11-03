@@ -1,3 +1,4 @@
+import datetime
 import os
 import sys
 from unittest.mock import Mock, PropertyMock, call, patch, sentinel
@@ -433,17 +434,6 @@ class TestCalculateSeconds:
 
         assert calculate_seconds(input) == input
 
-    def test_uses_current_time_if_only_start_parameter_provided(self, mocker):
-        mock_datetime = mocker.patch("src.dzira.dzira.datetime")
-        mock_datetime.strptime.return_value.__gt__ = Mock(return_value=False)
-
-        calculate_seconds(D(start="9.00"))
-
-        mock_datetime.now.assert_called()
-        mock_datetime.strptime.return_value.__gt__.assert_called_once_with(
-            mock_datetime.now.return_value
-        )
-
     @pytest.mark.parametrize(
         "start,end,expected",
         [
@@ -454,6 +444,16 @@ class TestCalculateSeconds:
     )
     def test_returns_seconds_delta_of_end_and_start(self, start, end, expected):
         assert calculate_seconds(D(start=start, end=end))["seconds"] == expected
+
+    def test_returns_seconds_delta_of_start_and_now_when_end_is_none(self, mocker):
+        mock_datetime = mocker.patch("src.dzira.dzira.datetime")
+        start = "8:00"
+        fake_now = "8:07"
+        mock_datetime.strptime.side_effect = [
+            datetime.datetime.strptime(fake_now, "%H:%M"),
+            datetime.datetime.strptime(start, "%H:%M")
+        ]
+        assert calculate_seconds(D(start=start, end=None))["seconds"] == str(7*60)
 
     def test_accepts_multiple_separators_in_input(self, mocker):
         mock_sub = mocker.patch("src.dzira.dzira.re.sub")

@@ -415,12 +415,13 @@ def calculate_seconds(payload: D) -> D:
     if start is None:
         return payload
 
+    fmt = "%H:%M"
+    unify = lambda t: datetime.strptime(re.sub(r"[,.h]", ":", t), fmt)
     t2 = (
-        datetime.now()
-        if end is None
-        else datetime.strptime(re.sub(r"[,.h]", ":", end), "%H:%M")
+        datetime.strptime(datetime.now().strftime("%H:%M"), fmt)
+        if end is None else unify(end)
     )
-    t1 = datetime.strptime(re.sub(r"[,.h]", ":", start), "%H:%M")
+    t1 = unify(start)
 
     if t2 < t1:
         raise click.BadParameter("start time cannot be later than end time")
