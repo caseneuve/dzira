@@ -31,10 +31,10 @@ from src.dzira.dzira import (
     get_worklog,
     hide_cursor,
     is_valid_hour,
-    is_valid_time,
     log,
     ls,
     main,
+    matches_time_re,
     perform_log_action,
     sanitize_params,
     show_cursor,
@@ -553,19 +553,22 @@ class TestCorrectTimeFormats:
     @pytest.mark.parametrize(
         "input, expected",
         [
-            ("1h 1m", True),
-            ("1h 59m", True),
-            ("1h 0m", False),
-            ("1h 60m", False),
-            ("23h 1m", True),
-            ("24h 1m", False),
-            ("0h 1m", False),
-            ("2h", True),
-            ("42m", True),
+            ("1h 1m", D(h="1h", m="1m")),
+            ("1h1m", D(h="1h", m="1m")),
+            ("1h 59m", D(h="1h", m="59m")),
+            ("1h59m", D(h="1h", m="59m")),
+            ("1h 0m", D()),
+            ("1h 60m", D()),
+            ("23h 1m", D(h="23h", m="1m")),
+            ("23h1m", D(h="23h", m="1m")),
+            ("24h 1m", D()),
+            ("0h 1m", D()),
+            ("2h", D(h="2h", m=None)),
+            ("42m", D(h=None, m="42m")),
         ],
     )
     def test_evaluates_time_format(self, input, expected):
-        assert expected == is_valid_time(input)
+        assert expected == matches_time_re(input)
 
     @pytest.mark.parametrize(
         "input, expected",

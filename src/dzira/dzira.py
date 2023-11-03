@@ -358,19 +358,24 @@ def ls(ctx):
 
 ### Validators
 
-def is_valid_time(time: str) -> bool:
-    return (
-        re.match(r"^(([1-9]|1\d|2[0-3])h)?(\s+(?=\d))?(([1-5]\d|[1-9])m)?$", time)
-        is not None
+def matches_time_re(time: str) -> D:
+    m = re.match(
+        r"^(?P<h>([1-9]|1\d|2[0-3])h)?(\s*(?=\d))?(?P<m>([1-5]\d|[1-9])m)?$",
+        time
     )
+    return D(m.groupdict() if m is not None else {})
 
 
-def is_valid_hour(hour):
+def is_valid_hour(hour) -> bool:
     return re.match(r"^(([01]?\d|2[0-3])[:.h,])+([0-5]?\d)$", hour) is not None
 
 
 def validate_time(_, __, time):
-    if time is None or is_valid_time(time):
+    if time is None:
+        return
+    if (match := matches_time_re(time)):
+        h, m = match("h", "m")
+        time = f"{h} {m or ''}".strip()
         return time
     raise click.BadParameter(
         "time has to be in format '[Nh] [Nm]', e.g. '2h', '30m', '4h 15m'"
@@ -496,7 +501,7 @@ def log(ctx, **_):
     Log time spent on ISSUE number or ISSUE with description containing
     matching string.
 
-    TIME spent should be in format '[Nh] [Nm]'; or it can be calculated
+    TIME spent should be in format '[Nh][ ][Nm]'; or it can be calculated
     when START time is be provided;
 
     END time is optional, both should match 'H:M' format.
