@@ -1,15 +1,17 @@
 from __future__ import annotations
+
+import concurrent.futures
 import os
 import re
+import subprocess
 import sys
 import time
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from functools import wraps
 from itertools import cycle
 from pathlib import Path
 from typing import Any, Iterable
-import concurrent.futures
 
 import click
 from dotenv import dotenv_values
@@ -59,7 +61,7 @@ class D(dict):
         else:
             return self.values()
 
-    def update(self, k, v) -> D:
+    def update(self, k, v):
         self[k] = v
         return self
 
@@ -79,7 +81,7 @@ def spin_it(msg="", done="✓", fail="✗"):
         def wrapper(*args, **kwargs):
             if not use_spinner:
                 result = func(*args, **kwargs)
-                if out:=result.stdout:
+                if out := result.stdout:
                     print(c("^green", done, separator, "^reset", out), flush=True)
                 return result
 
@@ -107,9 +109,9 @@ def spin_it(msg="", done="✓", fail="✗"):
                     error_msg = exc
                 print(
                     c("\r", "^red", fail, separator, msg),
-                    end=f": {error_msg}\n", flush=True,
+                    end=":\n", flush=True,
                 )
-                print(dir(exc))
+                raise Exception(error_msg)
         return wrapper
     return decorator
 
@@ -162,39 +164,56 @@ def get_jira(config: dict) -> Result:
     return Result(stdout=msg, result=jira)
 
 
+# TODO: remove this
 def get_board_name(config: dict) -> str:
     return f'{config["JIRA_BOARD"]} board'
 
 
 def _get_board_by_name(jira: JIRA, name: str) -> Board:
     if boards := jira.boards(name=name):
+        # TODO if len > 1, raise and print all found boards to prevent confusion
+        if len(boards) > 1:
+            info = "\n".join([f"\t - {b.name}, id: {b.id}" for b in boards])
+            raise Exception(
+                f"Found more than one matching board:\n{info}\n"
+                "Use more precise name or the board id"
+            )
         return boards[0]
     raise Exception(f"could not find any board matching {name!r}")
 
 
+# TODO: Should take board_id as well; so rename the func to more generic
 @spin_it("Getting board")
 def get_board_by_name(jira: JIRA, name: str) -> Result:
     board = _get_board_by_name(jira, name)
     return Result(
         result=board,
-        stdout=f'{board.raw["location"]["displayName"]}'
+        stdout=f'{board.raw["location"]["displayName"]} • id: {board.id}'
     )
 
 
-def get_sprints(jira: JIRA, board: Board, state: str = "active") -> list:
+def get_sprints(jira: JIRA, board: Board, state: str) -> list:
     if sprints := jira.sprints(board_id=board.id, state=state):
         return sprints
     raise Exception(f"could not find any sprints for board {board.name!r}")
 
 
 @spin_it("Getting sprint")
-def get_current_sprint(jira: JIRA, board: Board) -> Result:
-    sprint = get_sprints(jira, board)[0]
+def get_current_sprint(jira: JIRA, board: Board, state: str) -> Result:
+    # todo: if len > 1 raise / or enable choosing
+    sprints = get_sprints(jira, board, state)
+    if len(sprints) > 1:
+        info = "\n".join([f"\t - {s.name}, id: {s.id}" for s in sprints])
+        # todo: change 'matching' to variable holding the actual state being used for search
+        # probably: 'active'
+        raise Exception(
+            f"Found more than one matching sprint:\n{info}\n"
+            "Use sprint id to get unambiguous result"
+        )
+    sprint = sprints[0]
     fmt = lambda d: datetime.strptime(d, "%Y-%m-%dT%H:%M:%S.%fZ").strftime("%a, %b %d")
-    return Result(
-        result=sprint,
-        stdout=f"{sprint.name} [{fmt(sprint.startDate)} -> {fmt(sprint.endDate)}]",
-    )
+    out = f"{sprint.name} • id: {sprint.id}; {fmt(sprint.startDate)} -> {fmt(sprint.endDate)}"
+    return Result(result=sprint, stdout=out)
 
 
 def _get_sprint_issues(jira: JIRA, sprint: Sprint) -> list:
@@ -251,10 +270,11 @@ def update_worklog(worklog: Worklog, time: str, comment: str, **_) -> Result:
 
 @click.group()
 @click.option("-f", "--file", help=f"Config file path", type=click.Path())
-@click.option("-o", "--board", help="JIRA_BOARD value", envvar="JIRA_BOARD")
-@click.option("-k", "--token", help="JIRA_TOKEN value", envvar="JIRA_TOKEN")
+@click.option("-b", "--board", help="JIRA_BOARD value", envvar="JIRA_BOARD")
+# @click.option("-i", "--board-id", help="JIRA_BOARD_ID value", envvar="JIRA_BOARD_ID")
+@click.option("-t", "--token", help="JIRA_TOKEN value", envvar="JIRA_TOKEN")
 @click.option("-m", "--email", help="JIRA_EMAIL value", envvar="JIRA_EMAIL")
-@click.option("-d", "--server", help="JIRA_SERVER value", envvar="JIRA_SERVER")
+@click.option("-s", "--server", help="JIRA_SERVER value", envvar="JIRA_SERVER")
 @click.option("--spin/--no-spin", help="Control the spinner", default=True)
 @click.help_option("-h", "--help")
 @click.pass_context
@@ -280,6 +300,7 @@ def cli(ctx, file, board, token, email, server, spin):
     """
     global use_spinner; use_spinner = spin
 
+    # TODO: add JIRA_BOARD_ID
     ctx.ensure_object(dict)
     cfg = {
         k: v
@@ -300,11 +321,16 @@ def cli(ctx, file, board, token, email, server, spin):
 ##################################################
 
 
-def get_current_sprint_with_issues(config: dict) -> list[Issue]:
+def get_current_sprint_with_issues(config: dict, state: str, sprint_id: None | int) -> list[Issue]:
     config = get_config(config=config)
     jira = get_jira(config).result
+    # TODO: add logic to use board id from config, so refactor this func to be more general
     board = get_board_by_name(jira, get_board_name(config)).result
-    sprint = get_current_sprint(jira, board).result
+    # TODO refactor this to use one decorated func using either id or state
+    if sprint_id is not None:
+        sprint = jira.sprint(sprint_id)
+    else:
+        sprint = get_current_sprint(jira, board, state).result
     return get_sprint_issues(jira, sprint).result
 
 
@@ -344,12 +370,23 @@ def show_issues(issues: list) -> None:
 
 @cli.command()
 @click.pass_context
+@click.option(
+    "-s", "--state", type=click.Choice(["active", "closed"]), default="active",
+    help="TODO",
+)
+@click.option("-i", "--sprint-id", type=int, help="TODO")
 @click.help_option("-h", "--help")
-def ls(ctx):
+def ls(ctx, state, sprint_id):
     """
     List issues from the current sprint
     """
-    show_issues(get_current_sprint_with_issues(ctx.obj))
+    show_issues(
+        get_current_sprint_with_issues(
+            ctx.obj,
+            state,
+            sprint_id
+        )
+    )
 
 
 ##################################################
@@ -375,7 +412,7 @@ def validate_time(_, __, time):
         return
     if (match := matches_time_re(time)):
         h, m = match("h", "m")
-        time = f"{h} {m or ''}".strip()
+        time = f"{h + ' ' if h is not None else ''}{m or ''}".strip()
         return time
     raise click.BadParameter(
         "time has to be in format '[Nh] [Nm]', e.g. '2h', '30m', '4h 15m'"
@@ -443,7 +480,8 @@ def establish_issue(jira: JIRA, config: dict, payload: D) -> D:
         return payload.update("issue", f"{board}-{issue}")
 
     jira_board = get_board_by_name(jira, board).result
-    sprint = get_current_sprint(jira, jira_board)
+    # TODO: FIX!
+    sprint = get_current_sprint(jira, jira_board, "active")
     sprint_issues = get_sprint_issues(jira, sprint.result).result
     candidates = [i for i in sprint_issues if issue.lower() in i.fields.summary.lower()]
 
@@ -496,6 +534,7 @@ def perform_log_action(jira: JIRA, payload: D) -> None:
 )
 @click.option("--spin/--no-spin", default=True)
 @click.help_option("-h", "--help")
+# def log(ctx, **_):
 def log(ctx, **_):
     """
     Log time spent on ISSUE number or ISSUE with description containing
@@ -516,6 +555,55 @@ def log(ctx, **_):
     jira = get_jira(config).result
     payload = establish_issue(jira, config, payload)
     perform_log_action(jira, payload)
+
+
+@cli.command(hidden=True)
+@click.pass_context
+def report(ctx):
+    """
+    TODO:
+    - [ ] accept date
+    - [ ] accept flag to show rather full sprint, than a day
+    - [ ] show full report for the whole team?
+    """
+    config = get_config(config=ctx.obj)
+    jira = get_jira(config).result
+    users = jira.search_users(query=config["JIRA_EMAIL"])
+    user = users[0]
+    issues = jira.search_issues("worklogDate >= startOfDay()")
+    worklogs = {}
+    today = datetime.combine(date.today(), datetime.min.time())
+
+    for issue in issues:
+        wks = jira.worklogs(issue.id)
+        # wks = issue.raw["fields"]["worklog"]["worklogs"]
+        key = issue.raw["key"]
+        summary = issue.raw["fields"]["summary"]
+
+        worklogs[f"{key} {summary}"] = [
+            w for w in wks
+            if (
+                    (w.author.accountId == user.accountId) and
+                    (datetime.strptime(w.created.split(".")[0], "%Y-%m-%dT%H:%M:%S") >= today)
+            )
+        ]
+    for ii in worklogs:
+        print(ii)
+        print("="*len(ii))
+        for w in worklogs[ii]:
+            started, timeSpent, comment = D(w.raw)("started", "timeSpent", "comment")
+            print(started, timeSpent, comment)
+        print()
+
+
+@cli.command(hidden=True)
+@click.pass_context
+def shell(ctx):
+    config = get_config(config=ctx.obj)
+    server, email, token = D(config)(*(f"JIRA_{e}" for e in ["SERVER", "EMAIL", "TOKEN"]))
+    show_cursor()
+    print(f"Connecting to jira server using provided credentials (ignore the question below)")
+    subprocess.run(["jirashell", "-s", f"https://{server}", "-u", email, "-p", token])
 
 
 def main():

@@ -296,15 +296,6 @@ class TestGetSprints:
         assert result == [sentinel.sprint]
         mock_jira.sprints.assert_called_once_with(board_id=1, state=sentinel.state)
 
-    def test_returns_sprints_found_by_jira_with_provided_board_and_default_active(self):
-        mock_jira = Mock(sprints=Mock(return_value=[sentinel.sprint]))
-        mock_board = Mock(id=1)
-
-        result = get_sprints(mock_jira, mock_board)
-
-        assert result == [sentinel.sprint]
-        mock_jira.sprints.assert_called_once_with(board_id=1, state="active")
-
     def test_raises_when_jira_could_not_find_sprints(self):
         mock_jira = Mock(sprints=Mock(return_value=[]))
         mock_board = Mock(id=1, name="ZZZ")
@@ -330,9 +321,9 @@ class TestGetCurrentSprint:
         )
         mock_get_sprints.return_value = [mock_sprint]
 
-        result = get_current_sprint(sentinel.jira, sentinel.board)
+        result = get_current_sprint(sentinel.jira, sentinel.board, sentinel.state)
 
-        mock_get_sprints.assert_called_once_with(sentinel.jira, sentinel.board)
+        mock_get_sprints.assert_called_once_with(sentinel.jira, sentinel.board, sentinel.state)
         assert type(result) == Result
         assert result.result == mock_get_sprints.return_value[0]
 
@@ -493,7 +484,7 @@ class TestGetCurrentSprintWithIssues:
         board = mock_get_board_by_name.return_value.result
         sprint = mock_get_current_sprint.return_value.result
 
-        result = get_current_sprint_with_issues({})
+        result = get_current_sprint_with_issues({}, sentinel.state, None)
 
         assert result == mock_get_sprint_issues.return_value.result
         mock_get_config.assert_called_once()
@@ -501,9 +492,12 @@ class TestGetCurrentSprintWithIssues:
         mock_get_board_name.assert_called_once_with(mock_config)
         mock_get_board_by_name.assert_called_once_with(
             jira, mock_get_board_name.return_value
-        )
-        mock_get_current_sprint.assert_called_once_with(jira, board)
+         )
+        mock_get_current_sprint.assert_called_once_with(jira, board, sentinel.state)
         mock_get_sprint_issues.assert_called_once_with(jira, sprint)
+
+    def test_gets_sprint_from_id(self):
+        pytest.xfail("TODO & refactor")
 
 
 runner = CliRunner()
@@ -536,7 +530,7 @@ class TestLs:
         assert result.exit_code == 0
         mock_show_issues.assert_called_once_with(sentinel.issues)
         mock_get_current_sprint_with_issues.assert_called_once_with(
-            {"JIRA_TOKEN": "foo"}
+            {"JIRA_TOKEN": "foo"}, "active", None
         )
 
     @patch.dict(os.environ, {"JIRA_BOARD": "XYZ"}, clear=True)
@@ -545,8 +539,14 @@ class TestLs:
         runner.invoke(cli, ["--email", "foo@bar.com", "ls"])
 
         mock_get_current_sprint_with_issues.assert_called_once_with(
-            {"JIRA_BOARD": "XYZ", "JIRA_EMAIL": "foo@bar.com"}
+            {"JIRA_BOARD": "XYZ", "JIRA_EMAIL": "foo@bar.com"}, "active", None
         )
+
+    def test_uses_state_option(self):
+        pytest.xfail("TODO")
+
+    def test_uses_sprint_id_option(self):
+        pytest.xfail("TODO")
 
 
 class TestCorrectTimeFormats:
@@ -588,29 +588,29 @@ class TestCorrectTimeFormats:
         assert expected == is_valid_hour(input)
 
 
-@patch("src.dzira.dzira.is_valid_time")
+@patch("src.dzira.dzira.matches_time_re")
 class TestValidateTime:
-    def test_passes_when_time_is_none(self, mock_is_valid_time):
+    def test_passes_when_time_is_none(self, mock_matches_time_re):
         result = validate_time(Mock(), Mock(), None)
 
         assert result is None
-        mock_is_valid_time.assert_not_called()
+        mock_matches_time_re.assert_not_called()
 
-    def test_passes_when_validator_passes(self, mock_is_valid_time):
-        mock_is_valid_time.return_value = True
+    def test_passes_when_validator_passes(self, mock_matches_time_re):
+        mock_matches_time_re.return_value = D(h="2h")
 
         result = validate_time(Mock(), Mock(), "2h")
 
         assert result == "2h"
-        mock_is_valid_time.assert_called_with("2h")
+        mock_matches_time_re.assert_called_with("2h")
 
-    def test_raises_otherwise(self, mock_is_valid_time):
-        mock_is_valid_time.return_value = False
+    def test_raises_otherwise(self, mock_matches_time_re):
+        mock_matches_time_re.return_value = False
 
         with pytest.raises(click.BadParameter) as exc_info:
             validate_time(Mock(), Mock(), "invalid")
 
-        mock_is_valid_time.assert_called_with("invalid")
+        mock_matches_time_re.assert_called_with("invalid")
         assert "time has" in str(exc_info)
 
 
@@ -805,19 +805,19 @@ class TestLog:
         mocker.patch.dict(
             os.environ, {"JIRA_TOKEN": "token", "JIRA_EMAIL": "email"}, clear=True
         )
-        mock_d = mocker.patch("src.dzira.dzira.D")
         mock_sanitize_params = mocker.patch("src.dzira.dzira.sanitize_params")
         mock_get_config = mocker.patch("src.dzira.dzira.get_config")
         mock_get_jira = mocker.patch("src.dzira.dzira.get_jira")
         mock_establish_issue = mocker.patch("src.dzira.dzira.establish_issue")
         mock_perform_log_action = mocker.patch("src.dzira.dzira.perform_log_action")
+
         mock_jira = mock_get_jira.return_value.result
         mock_config = mock_get_config.return_value
 
         result = runner.invoke(cli, ["log", "123", "-t", "2h"])
 
         assert result.exit_code == 0
-        mock_sanitize_params.assert_called_once_with(mock_d.return_value)
+        mock_sanitize_params.assert_called_once()
         mock_get_config.assert_called_once_with(
             config=dict(JIRA_TOKEN="token", JIRA_EMAIL="email"),
         )
@@ -828,6 +828,9 @@ class TestLog:
         mock_perform_log_action.assert_called_once_with(
             mock_jira, mock_establish_issue.return_value
         )
+
+    def test_uses_provided_options(self):
+        pytest.xfail("TODO: with fixture")
 
 
 class TestMain:

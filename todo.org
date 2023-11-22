@@ -11,4 +11,43 @@ CLOSED: [2023-11-03 Fri 10:36]
 - [ ] Windows
 
 * TODO add Docker tests for installing the package with pip, possibly on all OS images
+
+* TODO fix getting board by name -- when multiple found, print what was found and show ids; also add option to provide board id (int)
+
+* TODO Add options:
+- to config:
+  + JIRA_BOARD_ID
+- to dzira:
+  + =-b= => board id
+- to ls:
+  + =-s= => sprint id
+
+* TODO refactor tests to use patches as fixtures
   
+* TODO not catching 404 when worklog not matches ticket -- can we search for worklog only?
+
+#+begin_quote
+ (jira:3.11.5) ~/dev/pa/dzira [dev]: dzira -b 'PA board' log overhead -w 14813 -t 20m
+✓  Getting client:      connecting to anaconda.atlassian.net
+✓  Getting board:       PythonAnywhere (PA) • id: 288
+✓  Getting sprint:      Iteration 129 • id: 1180; Fri, Nov 03 -> Thu, Nov 16
+✓  Getting issues:
+✗  Updating worklog:
+{'timeLogged': 'Invalid time duration entered.'}
+ (jira:3.11.5) ~/dev/pa/dzira [dev]: dzira log 349 -w 14813 -t 20m
+✓  Getting client:      connecting to anaconda.atlassian.net
+JiraError HTTP 404 url: https://anaconda.atlassian.net/rest/api/2/issue/PA-349/worklog/14813
+
+        response headers = {'Date': 'Mon, 06 Nov 2023 17:12:56 GMT', 'Content-Type': 'application/json;charset=UTF-8', 'Server': 'AtlassianEdge', 'Timing-Allow-Origin': '*', 'X-Arequestid': 'e4eceda95d05e64c65f24b21df384361', 'X-Aaccountid': '62b1d7a9f38b4dcf73d91753', 'Cache-Control': 'no-cache, no-store, no-transform', 'Content-Encoding': 'gzip', 'X-Content-Type-Options': 'nosniff', 'X-Xss-Protection': '1; mode=block', 'Atl-Traceid': '3ca2141f068d45c18a42b1c72afcbf68', 'Report-To': '{"endpoints": [{"url": "https://dz8aopenkvv6s.cloudfront.net"}], "group": "endpoint-1", "include_subdomains": true, "max_age": 600}', 'Nel': '{"failure_fraction": 0.001, "include_subdomains": true, "max_age": 600, "report_to": "endpoint-1"}', 'Strict-Transport-Security': 'max-age=63072000; includeSubDomains; preload', 'Transfer-Encoding': 'chunked'}
+        response text = {"errorMessages":[],"errors":{}}
+#+end_quote
+
+
+* TODO Sth wrong with validating time:
+
+#+begin_quote
+ (jira:3.11.5) ~/dev/pa/dzira [dev]: dzira log 350 -w 14813 -t 20m
+✓  Getting client:      connecting to anaconda.atlassian.net
+✗  Updating worklog:
+{'timeLogged': 'Invalid time duration entered.'}
+#+end_quote
