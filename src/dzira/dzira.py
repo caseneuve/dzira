@@ -534,7 +534,6 @@ def perform_log_action(jira: JIRA, payload: D) -> None:
 )
 @click.option("--spin/--no-spin", default=True)
 @click.help_option("-h", "--help")
-# def log(ctx, **_):
 def log(ctx, **_):
     """
     Log time spent on ISSUE number or ISSUE with description containing
@@ -571,12 +570,11 @@ def report(ctx):
     users = jira.search_users(query=config["JIRA_EMAIL"])
     user = users[0]
     issues = jira.search_issues("worklogDate >= startOfDay()")
-    worklogs = {}
     today = datetime.combine(date.today(), datetime.min.time())
+    worklogs = {}
 
     for issue in issues:
         wks = jira.worklogs(issue.id)
-        # wks = issue.raw["fields"]["worklog"]["worklogs"]
         key = issue.raw["key"]
         summary = issue.raw["fields"]["summary"]
 
@@ -587,13 +585,35 @@ def report(ctx):
                     (datetime.strptime(w.created.split(".")[0], "%Y-%m-%dT%H:%M:%S") >= today)
             )
         ]
+
+    total_time = 0
+
+    def seconds_to_hour_minute_fmt(seconds):
+        hours, remainder = divmod(seconds, 3600)
+        minutes, _ = divmod(remainder, 60)
+        return f"{hours}h {minutes:02}m"
+
     for ii in worklogs:
-        print(ii)
-        print("="*len(ii))
-        for w in worklogs[ii]:
-            started, timeSpent, comment = D(w.raw)("started", "timeSpent", "comment")
-            print(started, timeSpent, comment)
         print()
+        print(c("^bold", ii))
+        print("="*len(ii))
+        this_total_time = 0
+        for w in worklogs[ii]:
+            started, time_spent, comment, time_spent_seconds = D(w.raw)(
+                "started", "timeSpent", "comment", "timeSpentSeconds"
+            )
+            total_time += time_spent_seconds
+            this_total_time += time_spent_seconds
+
+            timestamp_obj = datetime.strptime(started, '%Y-%m-%dT%H:%M:%S.%f%z')
+            local_time = timestamp_obj.astimezone()
+            formatted_time = local_time.strftime('%H:%M:%S')
+            print(f"{formatted_time}  {time_spent:>6}  {comment}")
+
+        print("-"*len(ii))
+        print(f"{'total':>8}  {seconds_to_hour_minute_fmt(this_total_time)}")
+
+    print(f"\nTotal spent time: {seconds_to_hour_minute_fmt(total_time)}")
 
 
 @cli.command(hidden=True)
