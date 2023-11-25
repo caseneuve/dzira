@@ -61,9 +61,19 @@ class D(dict):
         else:
             return self.values()
 
-    def update(self, k, v):
-        self[k] = v
+    def update(self, *args, **kwargs):
+        if len(args) % 2 != 0:
+            raise Exception(
+                f"Provide even number of key-value args, need a value for key: {args[-1]!r}"
+            )
+        for i in range(0, len(args), 2):
+            self[args[i]] = args[i + 1]
+        for k, v in kwargs.items():
+            self[k] = v
         return self
+
+    def has(self, k):
+        return self.get(k) is not None
 
     def __repr__(self):
         return f"betterdict({dict(self)})"

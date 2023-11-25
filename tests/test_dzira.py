@@ -119,6 +119,7 @@ class TestResult:
 
 class TestD:
     d = D(a=1, b=2, c=3)
+
     def test_inherits_from_dict(self):
         assert isinstance(D(), dict)
 
@@ -137,6 +138,20 @@ class TestD:
     def test_update_returns_self_with_key_of_given_value(self):
         assert self.d.update("a", 99) == D({**self.d, "a": 99})
         assert self.d.update("x", 77) == D({**self.d, "x": 77})
+
+    def test_update_accepts_multiple_key_value_pairs(self):
+        assert self.d.update("d", 4, "e", 5) == D({**self.d, "d": 4, "e": 5})
+        assert self.d.update(d=4, e=5) == D({**self.d, "d": 4, "e": 5})
+
+    def test_update_raises_when_odd_number_of_args_given(self):
+        with pytest.raises(Exception) as exc_info:
+            self.d.update("a")
+
+        assert "Provide even number of key-value args, need a value for key: 'a'" in str(exc_info.value)
+
+    def test_has_returns_boolean_showing_if_key_has_a_value(self):
+        assert self.d.has("a")
+        assert self.d.has("foo") is False
 
     def test_repr(self):
         assert repr(D(a=1)) == "betterdict({'a': 1})"
