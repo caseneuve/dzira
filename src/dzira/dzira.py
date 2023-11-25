@@ -23,7 +23,7 @@ from tabulate import tabulate
 
 CONFIG_DIR_NAME = "dzira"
 DOTFILE = f".{CONFIG_DIR_NAME}"
-REQUIRED_KEYS = "JIRA_SERVER", "JIRA_EMAIL", "JIRA_TOKEN", "JIRA_BOARD"
+REQUIRED_KEYS = "JIRA_SERVER", "JIRA_EMAIL", "JIRA_TOKEN", "JIRA_PROJECT_KEY"
 
 use_spinner = True
 
@@ -230,16 +230,24 @@ def _get_sprint_issues(jira: JIRA, sprint: Sprint) -> list:
 
 
 @spin_it("Getting issues")
-def get_sprint_issues(jira: JIRA, sprint: Sprint) -> Result:
+def get_issues(jira: JIRA, sprint: Sprint) -> Result:
     issues = _get_sprint_issues(jira, sprint)
     return Result(result=issues)
 
 
-# TODO: catch errors and properly process them in Result (stderr?)
+# TODO: catch errors and properly process them in Result (stderr?) // update tests for new param
 @spin_it("Adding worklog")
-def add_worklog(jira: JIRA, issue, time=None, comment=None, seconds=None, **_) -> Result:
+def add_worklog(
+        jira: JIRA,
+        issue: str,
+        time: str | None = None,
+        comment: str | None = None,
+        seconds: int | None = None,
+        date: datetime | None = None,
+        **_
+) -> Result:
     work_log = jira.add_worklog(
-        issue=issue, timeSpent=time, timeSpentSeconds=seconds, comment=comment
+        issue=issue, timeSpent=time, timeSpentSeconds=seconds, comment=comment, started=date
     )
     return Result(
         stdout=(
@@ -255,18 +263,32 @@ def get_worklog(jira: JIRA, issue: str, worklog_id: str | int, **_) -> Worklog:
     raise Exception(f"could not find worklog {worklog_id} for issue {issue!r}")
 
 
-def _update_worklog(worklog: Worklog, time: str | None, comment: str | None) -> None:
+def _update_worklog(
+        worklog: Worklog, time: str | None, comment: str | None, date: datetime | None
+) -> None:
     if not (time or comment):
         raise Exception(
             "at least one of <time> or <comment> fields needed to perform the update!"
         )
-    fields = {k: v for k, v in zip(["timeSpent", "comment"], [time, comment]) if v}
+    fields = {
+        k: v
+        for k, v in zip(["timeSpent", "comment", "started"], [time, comment, date])
+        if v
+    }
     worklog.update(fields=fields)
 
 
+# TODO: we can't update worklog to change the issue
+# * add delete option to worklog !!!
+# * catch error when someone tries to update worklog in wrong ticket! => test it
 @spin_it("Updating worklog")
-def update_worklog(worklog: Worklog, time: str, comment: str, **_) -> Result:
-    _update_worklog(worklog, time, comment)
+def update_worklog(
+        worklog: Worklog, time: str, comment: str, date: datetime | None = None, **_
+) -> Result:
+    try:
+       _update_worklog(worklog, time, comment, date)
+    except JIRAError as exc:
+        raise Exception(str(exc))
     return Result(stdout=f"{worklog.id} updated!")
 
 
@@ -326,17 +348,17 @@ def cli(ctx, file, key, token, email, server, spin):
 ##################################################
 
 
-def get_current_sprint_with_issues(config: dict, state: str, sprint_id: None | int) -> list[Issue]:
-    config = get_config(config=config)
-    jira = get_jira(config).result
-    # TODO: add logic to use board id from config, so refactor this func to be more general
-    board = get_board_by_name(jira, get_board_name(config)).result
-    # TODO refactor this to use one decorated func using either id or state
-    if sprint_id is not None:
-        sprint = jira.sprint(sprint_id)
-    else:
-        sprint = get_current_sprint(jira, board, state).result
-    return get_sprint_issues(jira, sprint).result
+def process_sprint_out(sprint: Sprint) -> str:
+    fmt = lambda d: datetime.strptime(d, "%Y-%m-%dT%H:%M:%S.%fZ").strftime("%a, %b %d")
+    return f"{sprint.name} • id: {sprint.id} • {fmt(sprint.startDate)} -> {fmt(sprint.endDate)}"
+
+
+# TODO: we probably should check board always, as sprint_id may not be matching the team's board...
+def get_sprint_and_issues(jira: JIRA, payload: D) -> list:
+    if not payload.has("sprint_id"):
+        payload.update("board", get_board(jira, payload["JIRA_PROJECT_KEY"]).result)
+    sprint = get_sprint(jira, payload).result
+    return get_issues(jira, sprint).result
 
 
 def show_issues(issues: list) -> None:
@@ -376,22 +398,30 @@ def show_issues(issues: list) -> None:
 @cli.command()
 @click.pass_context
 @click.option(
-    "-s", "--state", type=click.Choice(["active", "closed"]), default="active",
-    help="TODO",
+    "-s", "--state",
+    type=click.Choice(["active", "closed"]), default="active", show_default=True,
+    help="Sprint state used for filtering",
 )
-@click.option("-i", "--sprint-id", type=int, help="TODO")
+@click.option(
+    "-i", "--sprint-id",
+    type=int,
+    help=(
+        "Sprint id to get unambiguous result, helpful when multiple active sprints; "
+        "has precedence over --state"
+    )
+)
 @click.help_option("-h", "--help")
 def ls(ctx, state, sprint_id):
     """
-    List issues from the current sprint
+    List issues from the current sprint.
+
+    'Current sprint' is understood as the first 'active' sprint found.
+    To avoid ambiguity, use --sprint-id option.
     """
-    show_issues(
-        get_current_sprint_with_issues(
-            ctx.obj,
-            state,
-            sprint_id
-        )
-    )
+    config = get_config(config=ctx.obj)
+    jira = get_jira(config).result
+    issues = get_sprint_and_issues(jira, D(state=state, sprint_id=sprint_id, **config))
+    show_issues(issues)
 
 
 ##################################################
@@ -425,17 +455,58 @@ def validate_time(_, __, time):
 
 
 def validate_hour(ctx, param, value):
+    "TODO: update tests for happy path return value"
     if (
         param.name == "end"
         and value
         and not (ctx.params.get("start") or ctx.params.get("time"))
     ):
         raise click.BadParameter("start time required to process end time")
-    if value is None or is_valid_hour(value):
-        return value
+    if value is None:
+        return
+    if is_valid_hour(value):
+        return re.sub(r"[,.h]", ":", value)
     raise click.BadParameter(
         "start/end time has to be in format '[H[H]][:.h,][M[M]]', e.g. '2h3', '12:03', '3,59'"
     )
+
+
+VALIDATE_DATE_FORMATS = ("%Y-%m-%d", "%Y-%m-%dT%H:%M", "%Y-%m-%d %H:%M")
+
+
+def validate_date(ctx, _, value):
+    """
+    TODO:
+    - guess timezone and change value to utc
+    """
+    if value is None:
+        return
+
+    if re.match(r"^\d{4}-\d{2}-\d{2}$", value) and (start:=ctx.params.get("start")) is not None:
+        value = f"{value} {start}"
+
+    date = None
+    for fmt in VALIDATE_DATE_FORMATS:
+        try:
+            date = datetime.strptime(value, fmt)
+            break
+        except ValueError:
+            pass
+
+    if not isinstance(date, datetime):
+        raise click.BadParameter(
+            f"date has to match one of supported ISO formats: {', '.join(VALIDATE_DATE_FORMATS)}"
+        )
+    now = datetime.now()
+    if date > now:
+        raise click.BadParameter("worklog date cannot be in future!")
+    if (now - date).days > 14:
+        raise click.BadParameter("worklog date cannot be older than 2 weeks!")
+
+    if (utc_offset:=datetime.utcnow().astimezone().utcoffset()):
+        return date - utc_offset
+    else:
+        return date
 
 
 def sanitize_params(args: D) -> D:
@@ -477,17 +548,14 @@ def calculate_seconds(payload: D) -> D:
         return payload.update("seconds", str(int(delta_seconds)))
 
 
-def establish_issue(jira: JIRA, config: dict, payload: D) -> D:
-    board = config.get("JIRA_BOARD")
+def establish_issue(jira: JIRA, payload: D) -> D:
+    key = payload["JIRA_PROJECT_KEY"]
     issue = payload.get("issue", "")
 
     if issue.isdigit():
-        return payload.update("issue", f"{board}-{issue}")
+        return payload.update("issue", f"{key}-{issue}")
 
-    jira_board = get_board_by_name(jira, board).result
-    # TODO: FIX!
-    sprint = get_current_sprint(jira, jira_board, "active")
-    sprint_issues = get_sprint_issues(jira, sprint.result).result
+    sprint_issues = get_sprint_and_issues(jira, payload)
     candidates = [i for i in sprint_issues if issue.lower() in i.fields.summary.lower()]
 
     if not candidates:
@@ -533,6 +601,17 @@ def perform_log_action(jira: JIRA, payload: D) -> None:
     type=click.UNPROCESSED,
     callback=validate_hour,
 )
+@click.option(
+    "-d",
+    "--date",
+    help=(
+        "Date when the work was done in ISO format, e.g. 2023-11-24, 2023-11-24 8:19, "
+        "defaults to now; "
+        "when --start option is provided and date matches %Y-%m-%d, start time will be used"
+    ),
+    type=click.UNPROCESSED,
+    callback=validate_date,
+)
 @click.option("-c", "--comment", help="Comment added to logged time")
 @click.option(
     "-w", "--worklog", "worklog_id", type=int, help="Id of the worklog to be updated"
@@ -540,11 +619,10 @@ def perform_log_action(jira: JIRA, payload: D) -> None:
 @click.option("--spin/--no-spin", default=True)
 @click.help_option("-h", "--help")
 def log(ctx, **_):
-    """
-    Log time spent on ISSUE number or ISSUE with description containing
+    """Log time spent on ISSUE number or ISSUE with description containing
     matching string.
 
-    TIME spent should be in format '[Nh][ ][Nm]'; or it can be calculated
+    TIME spent should be in format '[[Nh][ ]][Nm]'; or it can be calculated
     when START time is be provided;
 
     END time is optional, both should match 'H:M' format.
@@ -552,12 +630,22 @@ def log(ctx, **_):
     Optionally a COMMENT text can be added.
 
     When WORKLOG id is present, it will update an existing log,
-    rather then create a new one.
+    rather then create a new one.  ISSUE is still required.
+
+    To log work done in the past (but no older as 2 weeks), use --date option.
+    It accepts the following patterns:
+
+    \b
+      "YYYY-mm-dd", "YYYY-mm-ddTHH:MM", "YYYY-mm-dd HH:MM".
+
+    \b Time is assumed from the START option, if present and date is
+    not specifying it.  The script will try to figure out local
+    timezone and adjust the log started time accordingly.
     """
     payload = sanitize_params(D(ctx.params))
     config = get_config(config=ctx.obj)
     jira = get_jira(config).result
-    payload = establish_issue(jira, config, payload)
+    payload = establish_issue(jira, payload.update(**config))
     perform_log_action(jira, payload)
 
 
@@ -568,7 +656,7 @@ def report(ctx):
     TODO:
     - [ ] accept date
     - [ ] accept flag to show rather full sprint, than a day
-    - [ ] show full report for the whole team?
+    - [ ] tests! + break into smaller funcs
     """
     config = get_config(config=ctx.obj)
     jira = get_jira(config).result
@@ -587,7 +675,7 @@ def report(ctx):
             w for w in wks
             if (
                     (w.author.accountId == user.accountId) and
-                    (datetime.strptime(w.created.split(".")[0], "%Y-%m-%dT%H:%M:%S") >= today)
+                    (datetime.strptime(w.started.split(".")[0], "%Y-%m-%dT%H:%M:%S") >= today)
             )
         ]
 
@@ -618,7 +706,10 @@ def report(ctx):
         print("-"*len(ii))
         print(f"{'total':>8}  {seconds_to_hour_minute_fmt(this_total_time)}")
 
-    print(f"\nTotal spent time: {seconds_to_hour_minute_fmt(total_time)}")
+    if worklogs:
+        print(f"\nTotal spent time: {seconds_to_hour_minute_fmt(total_time)}")
+    else:
+        print("No work logged today!")
 
 
 @cli.command(hidden=True)

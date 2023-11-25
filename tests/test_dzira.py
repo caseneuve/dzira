@@ -2,6 +2,7 @@ import datetime
 import os
 import sys
 from unittest.mock import Mock, PropertyMock, call, patch, sentinel
+from jira.exceptions import JIRAError
 
 import pytest
 import click
@@ -13,7 +14,7 @@ from src.dzira.dzira import (
     DOTFILE,
     VALIDATE_DATE_FORMATS,
     Result,
-    _get_board_by_name,
+    _get_sprints,
     _update_worklog,
     add_worklog,
     c,
@@ -23,11 +24,11 @@ from src.dzira.dzira import (
     get_board,
     get_config,
     get_config_from_file,
-    get_current_sprint,
-    get_current_sprint_with_issues,
+    get_issues,
+    get_issues,
     get_jira,
-    get_sprint_issues,
-    get_sprints,
+    get_sprint,
+    get_sprint_and_issues,
     get_worklog,
     hide_cursor,
     is_valid_hour,
@@ -36,9 +37,11 @@ from src.dzira.dzira import (
     main,
     matches_time_re,
     perform_log_action,
+    process_sprint_out,
     sanitize_params,
     show_cursor,
     update_worklog,
+    validate_date,
     validate_hour,
     validate_time,
 )
@@ -308,7 +311,7 @@ class TestGetSprints:
         mock_jira = Mock(sprints=Mock(return_value=[sentinel.sprint]))
         mock_board = Mock(id=1)
 
-        result = get_sprints(mock_jira, mock_board, sentinel.state)
+        result = _get_sprints(mock_jira, mock_board, sentinel.state)
 
         assert result == [sentinel.sprint]
         mock_jira.sprints.assert_called_once_with(board_id=1, state=sentinel.state)
@@ -318,42 +321,57 @@ class TestGetSprints:
         mock_board = Mock(id=1, name="ZZZ")
 
         with pytest.raises(Exception) as exc_info:
-            get_sprints(mock_jira, mock_board, "foo")
+            _get_sprints(mock_jira, mock_board, "foo")
 
         assert f"could not find any sprints for board {mock_board.name!r}" in str(
             exc_info.value
         )
 
 
-class TestGetCurrentSprint:
+class TestGetSprint:
     def test_is_decorated_correctly(self):
-        assert get_current_sprint.is_decorated_with_spin_it
+        assert get_sprint.is_decorated_with_spin_it
 
-    def test_calls_returns_wrapped_first_sprint_from_get_sprints(self, mocker):
-        mock_get_sprints = mocker.patch("src.dzira.dzira.get_sprints")
-        mock_sprint = Mock(
-            name="Foo",
-            startDate="1410-07-14T12:00:00.00Z",
-            endDate="1410-08-14T12:00:00.00Z"
-        )
-        mock_get_sprints.return_value = [mock_sprint]
+    def test_finds_sprint_from_id(self, mocker):
+        mock_get_sprint_from_id = mocker.patch("src.dzira.dzira._get_sprint_from_id")
+        mock_get_first_sprint_matching_state = mocker.patch("src.dzira.dzira._get_first_sprint_matching_state")
+        mock_process_sprint_out = mocker.patch("src.dzira.dzira.process_sprint_out", Mock(return_value=""))
+        mock_payload = D(sprint_id=sentinel.sprint_id)
 
-        result = get_current_sprint(sentinel.jira, sentinel.board, sentinel.state)
+        get_sprint(sentinel.jira, mock_payload)
 
-        mock_get_sprints.assert_called_once_with(sentinel.jira, sentinel.board, sentinel.state)
-        assert type(result) == Result
-        assert result.result == mock_get_sprints.return_value[0]
+        mock_get_sprint_from_id.assert_called_once_with(sentinel.jira, **mock_payload)
+        assert not mock_get_first_sprint_matching_state.called
+        mock_process_sprint_out.assert_called_once_with(mock_get_sprint_from_id.return_value)
+
+    def test_finds_sprint_using_state(self, mocker):
+        mock_get_sprint_from_id = mocker.patch("src.dzira.dzira._get_sprint_from_id")
+        mock_get_first_sprint_matching_state = mocker.patch("src.dzira.dzira._get_first_sprint_matching_state")
+        mock_process_sprint_out = mocker.patch("src.dzira.dzira.process_sprint_out", Mock(return_value=""))
+        mock_payload = D(state="foo")
+
+        get_sprint(sentinel.jira, mock_payload)
+
+        mock_get_first_sprint_matching_state.assert_called_once_with(sentinel.jira, **mock_payload)
+        assert not mock_get_sprint_from_id.called
+        mock_process_sprint_out.assert_called_once_with(mock_get_first_sprint_matching_state.return_value)
+
+    def test_returns_result_class_instance(self, mocker):
+        mocker.patch("src.dzira.dzira._get_sprint_from_id")
+        mocker.patch("src.dzira.dzira._get_first_sprint_matching_state")
+        mocker.patch("src.dzira.dzira.process_sprint_out", Mock(return_value=""))
+
+        assert type(get_sprint(sentinel.jira, D())) == Result
 
 
-
-class TestGetSprintIssuesPublic:
+class TestGetIssuesPublic:
     def test_is_decorated_correctly(self):
-        assert get_sprint_issues.is_decorated_with_spin_it
+        assert get_issues.is_decorated_with_spin_it
 
     def test_calls_private_function_and_wraps_the_result(self, mocker):
         mock_private = mocker.patch("src.dzira.dzira._get_sprint_issues")
 
-        result = get_sprint_issues(sentinel.jira, sentinel.sprint)
+        result = get_issues(sentinel.jira, sentinel.sprint)
 
         mock_private.assert_called_once_with(sentinel.jira, sentinel.sprint)
         assert type(result) == Result
@@ -365,17 +383,24 @@ class TestAddWorklog:
         mock_worklog = Mock(raw={"timeSpent": "2h"}, issueId="123", id=321)
         mock_jira = Mock(add_worklog=Mock(return_value=mock_worklog))
 
-        result1 = add_worklog(mock_jira, "333", time="2h")
+        result1 = add_worklog(mock_jira, "333", time="2h", date=sentinel.date)
         result2 = add_worklog(mock_jira, "333", seconds=f"{60 * 60 * 2}", comment="blah!")
 
         assert mock_jira.add_worklog.call_args_list == (
             [
-                call(issue="333", timeSpent="2h", timeSpentSeconds=None, comment=None),
+                call(
+                    issue="333",
+                    timeSpent="2h",
+                    timeSpentSeconds=None,
+                    comment=None,
+                    started=sentinel.date,
+                ),
                 call(
                     issue="333",
                     timeSpent=None,
                     timeSpentSeconds="7200",
                     comment="blah!",
+                    started=None,
                 ),
             ]
         )
@@ -405,17 +430,17 @@ class TestUpdateWorklogPrivate:
     def test_updates_given_worklog_with_provided_fields(self):
         mock_worklog = Mock(update=Mock(), id="42")
 
-        _update_worklog(mock_worklog, time="2h", comment="blah!")
+        _update_worklog(mock_worklog, time="2h", comment="blah!", date=sentinel.date)
 
         mock_worklog.update.assert_called_once_with(
-            fields={"timeSpent": "2h", "comment": "blah!"}
+            fields={"timeSpent": "2h", "comment": "blah!", "started": sentinel.date}
         )
 
     def test_raises_when_no_time_nor_comment_fields_provided(self):
         mock_worklog = Mock(update=Mock())
 
         with pytest.raises(Exception) as exc_info:
-            _update_worklog(mock_worklog, time=None, comment=None)
+            _update_worklog(mock_worklog, time=None, comment=None, date=None)
 
         assert "at least one of <time> or <comment> fields needed" in str(exc_info)
         mock_worklog.update.assert_not_called()
@@ -429,9 +454,9 @@ class TestUpdateWorklogPublic:
         mock_worklog = Mock(id="42")
         mock_private = mocker.patch("src.dzira.dzira._update_worklog")
 
-        result = update_worklog(mock_worklog, time="2h", comment="blah!")
+        result = update_worklog(mock_worklog, time="2h", comment="blah!", date=None)
 
-        mock_private.assert_called_once_with(mock_worklog, "2h", "blah!")
+        mock_private.assert_called_once_with(mock_worklog, "2h", "blah!", None)
         assert type(result) == Result
         assert "42" in result.stdout
 
@@ -488,31 +513,49 @@ class TestCalculateSeconds:
         assert "start time cannot be later than end time" in str(exc_info.value)
 
 
-class TestGetCurrentSprintWithIssues:
-    def test_runs_with_config_from_file_by_default(self, mocker):
-        mock_get_config = mocker.patch("src.dzira.dzira.get_config")
-        mock_config = mock_get_config.return_value
-        mock_get_jira = mocker.patch("src.dzira.dzira.get_jira")
+class TestProcessSprintOut:
+    def test_shows_info_about_sprint(self):
+        mock_sprint = Mock(
+            name="Foo",
+            id=123,
+            startDate="2023-10-23T8:10:00.123Z",
+            endDate="2023-11-23T8:10:00.123Z"
+        )
+
+        result = process_sprint_out(mock_sprint)
+
+        for str in ("Foo", "id: 123", "Mon, Oct 23", "Thu, Nov 23"):
+            assert str in result
+
+
+class TestGetSprintAndIssues:
+    def test_gets_sprint_and_issues_using_sprint_id(self, mocker):
         mock_get_board = mocker.patch("src.dzira.dzira.get_board")
-        mock_get_current_sprint = mocker.patch("src.dzira.dzira.get_current_sprint")
-        mock_get_sprint_issues = mocker.patch("src.dzira.dzira.get_sprint_issues")
-        jira = mock_get_jira.return_value.result
-        board = mock_get_board.return_value.result
-        sprint = mock_get_current_sprint.return_value.result
+        mock_get_sprint = mocker.patch("src.dzira.dzira.get_sprint")
+        mock_get_issues = mocker.patch("src.dzira.dzira.get_issues")
+        mock_payload = D(sprint_id="foo")
 
-        result = get_issues({}, sentinel.state, None)
+        result = get_sprint_and_issues(sentinel.jira, mock_payload)
 
-        assert result == mock_get_sprint_issues.return_value.result
-        mock_get_config.assert_called_once()
-        mock_get_jira.assert_called_once_with(mock_config)
-        mock_get_board.assert_called_once_with(
-            jira, mock_config["key"]
-         )
-        mock_get_current_sprint.assert_called_once_with(jira, board, sentinel.state)
-        mock_get_sprint_issues.assert_called_once_with(jira, sprint)
+        mock_get_sprint.assert_called_once_with(sentinel.jira, mock_payload)
+        mock_get_issues.assert_called_once_with(sentinel.jira, mock_get_sprint.return_value.result)
+        assert not mock_get_board.called
+        assert result == mock_get_issues.return_value.result
 
-    def test_gets_sprint_from_id(self):
-        pytest.xfail("TODO & refactor")
+    def test_gets_sprint_and_issues_using_board(self, mocker):
+        mock_get_board = mocker.patch("src.dzira.dzira.get_board")
+        mock_get_sprint = mocker.patch("src.dzira.dzira.get_sprint")
+        mock_get_issues = mocker.patch("src.dzira.dzira.get_issues")
+        mock_payload = D(JIRA_PROJECT_KEY=sentinel.key)
+
+        result = get_sprint_and_issues(sentinel.jira, mock_payload)
+
+        mock_get_sprint.assert_called_once_with(
+            sentinel.jira, mock_payload.update("board", mock_get_board.return_value.result)
+        )
+        mock_get_issues.assert_called_once_with(sentinel.jira, mock_get_sprint.return_value.result)
+        mock_get_board.assert_called_once_with(sentinel.jira, sentinel.key)
+        assert result == mock_get_issues.return_value.result
 
 
 runner = CliRunner()
@@ -534,34 +577,69 @@ class TestLs:
         assert "List issues from the current sprint" in result.output
 
     def test_happy_run(self, mocker):
-        mock_get_current_sprint_with_issues = mocker.patch(
-            "src.dzira.dzira.get_current_sprint_with_issues"
+        mock_config = {}
+        mocker.patch("src.dzira.dzira.get_config", return_value=mock_config)
+        mocker.patch("src.dzira.dzira.get_jira", Mock(return_value=Mock(result=sentinel.jira)))
+        mock_get_sprint_and_issues = mocker.patch(
+            "src.dzira.dzira.get_sprint_and_issues", Mock(return_value=sentinel.issues)
         )
-        mock_get_current_sprint_with_issues.return_value = sentinel.issues
         mock_show_issues = mocker.patch("src.dzira.dzira.show_issues")
 
         result = runner.invoke(cli, ["--token", "foo", "ls"])
 
         assert result.exit_code == 0
         mock_show_issues.assert_called_once_with(sentinel.issues)
-        mock_get_current_sprint_with_issues.assert_called_once_with(
-            {"JIRA_TOKEN": "foo"}, "active", None
+        mock_get_sprint_and_issues.assert_called_once_with(
+            sentinel.jira, D(state="active", sprint_id=None, **mock_config)
         )
 
     @patch.dict(os.environ, {"JIRA_PROJECT_KEY": "XYZ"}, clear=True)
-    @patch("src.dzira.dzira.get_current_sprint_with_issues")
-    def test_has_access_to_context_provided_by_cli_group(self, mock_get_current_sprint_with_issues):
+    @patch("src.dzira.dzira.get_sprint_and_issues")
+    def test_has_access_to_context_provided_by_cli_group(self, mock_get_sprint_and_issues, mocker):
+        mock_config = {"JIRA_PROJECT_KEY": "XYZ", "JIRA_EMAIL": "foo@bar.com"}
+        mock_get_config = mocker.patch("src.dzira.dzira.get_config")
+        mocker.patch("src.dzira.dzira.get_jira", Mock(return_value=Mock(result=sentinel.jira)))
+
         runner.invoke(cli, ["--email", "foo@bar.com", "ls"])
 
-        mock_get_current_sprint_with_issues.assert_called_once_with(
-            {"JIRA_PROJECT_KEY": "XYZ", "JIRA_EMAIL": "foo@bar.com"}, "active", None
+        mock_get_sprint_and_issues.assert_called_once_with(
+            sentinel.jira, D(state="active", sprint_id=None, **mock_get_config.return_value)
+        )
+        mock_get_config.assert_called_once_with(config=mock_config)
+
+    def test_uses_state_option(self, mocker):
+        mock_get_config = mocker.patch("src.dzira.dzira.get_config")
+        mocker.patch("src.dzira.dzira.get_jira", Mock(return_value=Mock(result=sentinel.jira)))
+        mock_get_sprint_and_issues = mocker.patch(
+            "src.dzira.dzira.get_sprint_and_issues"
+        )
+        mock_get_sprint_and_issues.return_value = sentinel.issues
+        mock_show_issues = mocker.patch("src.dzira.dzira.show_issues")
+
+        result = runner.invoke(cli, ["ls", "--state", "closed"])
+
+        assert result.exit_code == 0
+        mock_show_issues.assert_called_once_with(sentinel.issues)
+        mock_get_sprint_and_issues.assert_called_once_with(
+            sentinel.jira, D(state="closed", sprint_id=None, **mock_get_config.return_value)
         )
 
-    def test_uses_state_option(self):
-        pytest.xfail("TODO")
+    def test_uses_sprint_id_option(self, mocker):
+        mock_get_config = mocker.patch("src.dzira.dzira.get_config")
+        mocker.patch("src.dzira.dzira.get_jira", Mock(return_value=Mock(result=sentinel.jira)))
+        mock_get_sprint_and_issues = mocker.patch(
+            "src.dzira.dzira.get_sprint_and_issues"
+        )
+        mock_get_sprint_and_issues.return_value = sentinel.issues
+        mock_show_issues = mocker.patch("src.dzira.dzira.show_issues")
 
-    def test_uses_sprint_id_option(self):
-        pytest.xfail("TODO")
+        result = runner.invoke(cli, ["ls", "--sprint-id", "42"])
+
+        assert result.exit_code == 0
+        mock_show_issues.assert_called_once_with(sentinel.issues)
+        mock_get_sprint_and_issues.assert_called_once_with(
+            sentinel.jira, D(state="active", sprint_id=42, **mock_get_config.return_value)
+        )
 
 
 class TestCorrectTimeFormats:
@@ -652,7 +730,7 @@ class TestValidateHour:
         assert result is None
         mock_is_valid_hour.assert_not_called()
 
-    def test_passes_when_validator_passes(self, mock_is_valid_hour):
+    def test_passes_when_validator_passes_and_returns_unified_value(self, mock_is_valid_hour):
         mock_ctx = Mock(params={"start": "16h42"})
         mock_param = Mock()
         type(mock_param).name = PropertyMock(return_value="end")
@@ -660,7 +738,7 @@ class TestValidateHour:
 
         result = validate_hour(mock_ctx, mock_param, "17h23")
 
-        assert result == "17h23"
+        assert result == "17:23"
         mock_is_valid_hour.assert_called_once_with("17h23")
 
     def test_raises_otherwise(self, mock_is_valid_hour):
@@ -677,6 +755,76 @@ class TestValidateHour:
             in str(exc_info)
         )
         mock_is_valid_hour.assert_called_once_with("invalid")
+
+
+class TestValidateDate:
+    def test_returns_early_when_date_is_none(self):
+        assert validate_date(Mock(), Mock(), None) is None
+
+    def test_uses_start_time_when_not_provided_in_date_option(self, mocker):
+        mock_ctx = Mock(params={"start": "13:42"})
+        mock_datetime = mocker.patch("src.dzira.dzira.datetime")
+        mock_isinstance = mocker.patch("src.dzira.dzira.isinstance")
+        mocker.patch("src.dzira.dzira.VALIDATE_DATE_FORMATS", ["%Y-%m-%d %H:%M"])
+        mock_isinstance.return_value = True
+        mock_datetime.strptime.return_value = datetime.datetime(2023, 11, 23, 13, 42)
+        mock_datetime.now.return_value = datetime.datetime(2023, 11, 24, 18, 0)
+        mock_datetime.utcnow.return_value\
+            .astimezone.return_value\
+            .utcoffset.return_value = None
+
+        result = validate_date(mock_ctx, Mock(), "2023-11-23")
+
+        assert result == datetime.datetime(2023, 11, 23, 13, 42)
+        mock_datetime.strptime.assert_called_once_with("2023-11-23 13:42", "%Y-%m-%d %H:%M")
+
+    def test_validates_against_multiple_formats_and_raises_when_none_matches(self, mocker):
+        mocker.patch("src.dzira.dzira.isinstance", Mock(return_value=False))
+        mock_datetime = mocker.patch("src.dzira.dzira.datetime")
+        mock_datetime.strptime.side_effect = 3 * [ValueError]
+
+        with pytest.raises(click.BadParameter) as exc_info:
+            validate_date(Mock(), Mock(), "foo")
+
+        assert "date has to match one of supported ISO formats" in str(exc_info)
+        assert ", ".join(VALIDATE_DATE_FORMATS) in str(exc_info)
+        for fmt in VALIDATE_DATE_FORMATS:
+            mock_datetime.strptime.assert_has_calls([call("foo", fmt)])
+
+    def test_raises_when_date_in_future(self, mocker):
+        mocker.patch("src.dzira.dzira.isinstance", Mock(return_value=True))
+        mock_datetime = mocker.patch("src.dzira.dzira.datetime")
+        mock_datetime.strptime.return_value = datetime.datetime(2055, 11, 23, 13, 42)
+        mock_datetime.now.return_value = datetime.datetime(2023, 11, 24, 18, 0)
+
+        with pytest.raises(click.BadParameter) as exc_info:
+            validate_date(Mock(), Mock(), "2055-11-23T13:42")
+
+        assert "worklog date cannot be in future" in str(exc_info)
+
+    def test_raises_when_date_older_than_2_weeks(self, mocker):
+        mocker.patch("src.dzira.dzira.isinstance", Mock(return_value=True))
+        mock_datetime = mocker.patch("src.dzira.dzira.datetime")
+        mock_datetime.strptime.return_value = datetime.datetime(1055, 11, 23, 13, 42)
+        mock_datetime.now.return_value = datetime.datetime(2023, 11, 24, 18, 0)
+
+        with pytest.raises(click.BadParameter) as exc_info:
+            validate_date(Mock(), Mock(), "1055-11-23T13:42")
+
+        assert "worklog date cannot be older than 2 weeks" in str(exc_info)
+
+    def test_tries_to_convert_date_to_timezone_aware(self, mocker):
+        mocker.patch("src.dzira.dzira.isinstance", Mock(return_value=True))
+        mock_datetime = mocker.patch("src.dzira.dzira.datetime")
+        mock_datetime.strptime.return_value = datetime.datetime(2023, 11, 23, 13, 42)
+        mock_datetime.now.return_value = datetime.datetime(2023, 11, 24, 18, 0)
+        mock_datetime.utcnow.return_value\
+            .astimezone.return_value\
+            .utcoffset.return_value = datetime.timedelta(seconds=3600)
+
+        result = validate_date(Mock(), Mock(), "2023-11-23T13:42")
+
+        assert result == datetime.datetime(2023, 11, 23, 12, 42)
 
 
 class TestSanitizeParams:
@@ -704,76 +852,60 @@ class TestSanitizeParams:
         assert result == mock_calculate_seconds.return_value
 
 
-@patch("src.dzira.dzira.get_sprint_issues")
-@patch("src.dzira.dzira.get_current_sprint")
-@patch("src.dzira.dzira.get_board")
+@patch("src.dzira.dzira.get_sprint_and_issues")
 class TestEstablishIssue:
     config = {"JIRA_PROJECT_KEY": "XYZ"}
 
-    def test_returns_early_if_issue_is_digits_and_board_provided(
-            self,
-            mock_get_board,
-            mock_get_current_sprint,
-            mock_get_sprint_issues,
+    def test_returns_early_if_issue_is_digits_and_key_provided(
+            self, mock_get_sprint_and_issues,
     ):
-        result = establish_issue(Mock(), self.config, D(issue="123"))
+        result = establish_issue(Mock(), D(issue="123", **self.config))
 
-        assert result == D(issue="XYZ-123")
-        mock_get_board.assert_not_called()
-        mock_get_current_sprint.assert_not_called()
-        mock_get_sprint_issues.assert_not_called()
+        assert result == D(issue="XYZ-123", **self.config)
+        mock_get_sprint_and_issues.assert_not_called()
 
     def test_returns_early_if_issue_is_digits_and_board_not_provided(
-            self,
-            mock_get_board,
-            mock_get_current_sprint,
-            mock_get_sprint_issues,
+            self, mock_get_sprint_and_issues,
     ):
-        result = establish_issue(Mock(), self.config, D(issue="123"))
+        result = establish_issue(Mock(), D(issue="123", **self.config))
 
-        assert result == D(issue="XYZ-123")
-        mock_get_board.assert_not_called()
-        mock_get_current_sprint.assert_not_called()
-        mock_get_sprint_issues.assert_not_called()
+        assert result == D(issue="XYZ-123", **self.config)
+        mock_get_sprint_and_issues.assert_not_called()
 
     def test_raises_when_no_matching_issue_in_current_sprint(
-            self, _, __, mock_get_sprint_issues
+            self, mock_get_sprint_issues
     ):
-        mock_get_sprint_issues.return_value = Result(result=[])
+        mock_get_sprint_issues.return_value = []
 
         with pytest.raises(Exception) as exc_info:
-            establish_issue(Mock(), self.config, D(issue="some description"))
+            establish_issue(Mock(), D(issue="some description", **self.config))
 
         assert "could not find any matching issues" in str(exc_info)
 
     def test_raises_when_more_than_one_matching_issue_in_current_sprint(
-            self, _, __, mock_get_sprint_issues
+            self, mock_get_sprint_and_issues
     ):
-        mock_get_sprint_issues.return_value = Result(
-            result=[
-                Mock(key="1", fields=Mock(summary="I have some description")),
-                Mock(key="2", fields=Mock(summary="Need some description")),
-            ]
-        )
+        mock_get_sprint_and_issues.return_value = [
+            Mock(key="1", fields=Mock(summary="I have some description")),
+            Mock(key="2", fields=Mock(summary="Need some description")),
+        ]
 
         with pytest.raises(Exception) as exc_info:
-            establish_issue(Mock(), self.config, D(issue="some description"))
+            establish_issue(Mock(), D(issue="some description", **self.config))
 
         assert "found more than one matching issue" in str(exc_info)
 
     def test_returns_updated_payload_with_issue_key_when_issue_found_in_the_sprint(
-            self, _, __, mock_get_sprint_issues,
+            self, mock_get_sprint_and_issues,
     ):
-        mock_get_sprint_issues.return_value = Result(
-            result= [
-                Mock(key="1", fields=Mock(summary="I have some description")),
-                Mock(key="2", fields=Mock(summary="I don't have any matching phrases")),
-            ]
-        )
+        mock_get_sprint_and_issues.return_value = [
+            Mock(key="1", fields=Mock(summary="I have some description")),
+            Mock(key="2", fields=Mock(summary="I don't have any matching phrases")),
+        ]
 
-        result = establish_issue(Mock(), self.config, D(issue="some description"))
+        result = establish_issue(Mock(), D(issue="some description").update(**self.config))
 
-        assert result == D(issue="1")
+        assert result == D(issue="1", **self.config)
 
 
 class TestLogAction:
@@ -831,14 +963,14 @@ class TestLog:
         )
         mock_get_jira.assert_called_once_with(mock_config)
         mock_establish_issue.assert_called_once_with(
-            mock_jira, mock_config, mock_sanitize_params.return_value
+            mock_jira, mock_sanitize_params.return_value.update.return_value
+        )
+        mock_sanitize_params.return_value.update.assert_called_once_with(
+            **mock_get_config.return_value
         )
         mock_perform_log_action.assert_called_once_with(
             mock_jira, mock_establish_issue.return_value
         )
-
-    def test_uses_provided_options(self):
-        pytest.xfail("TODO: with fixture")
 
 
 class TestMain:
