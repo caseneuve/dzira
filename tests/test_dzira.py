@@ -11,6 +11,7 @@ from src.dzira.dzira import (
     CONFIG_DIR_NAME,
     D,
     DOTFILE,
+    VALIDATE_DATE_FORMATS,
     Result,
     _get_board_by_name,
     _update_worklog,
@@ -19,8 +20,7 @@ from src.dzira.dzira import (
     calculate_seconds,
     cli,
     establish_issue,
-    get_board_by_name,
-    get_board_name,
+    get_board,
     get_config,
     get_config_from_file,
     get_current_sprint,
@@ -51,7 +51,7 @@ def config(mocker):
         "JIRA_SERVER": "foo.bar.com",
         "JIRA_EMAIL": "name@example.com",
         "JIRA_TOKEN": "asdf1234",
-        "JIRA_BOARD": "XYZ",
+        "JIRA_PROJECT_KEY": "XYZ",
     }
     return mock_dotenv_values
 
@@ -261,44 +261,46 @@ class TestGetJira:
         )
 
 
-class TestGetBoardName:
-    def test_returns_value_from_config(self):
-        assert get_board_name({"JIRA_BOARD": "XYZ"}) == "XYZ board"
-
-
-class TestGetBoardByNamePrivate:
-    def test_returns_first_board_from_jira(self):
-        mock_jira = Mock(boards=Mock(return_value=[sentinel.board]))
-
-        result = _get_board_by_name(mock_jira, sentinel.name)
-
-        mock_jira.boards.assert_called_once_with(name=sentinel.name)
-        assert result == sentinel.board
-
-    def test_raises_when_jira_could_not_find_any_board(self):
-        mock_jira = Mock(boards=Mock(return_value=[]))
-
-        with pytest.raises(Exception) as exc_info:
-            _get_board_by_name(mock_jira, "XYZ")
-
-        assert str(exc_info.value) == "could not find any board matching 'XYZ'"
-
-
-class TestGetBoardByNamePublic:
+class TestGetBoard:
     def test_is_decorated_correctly(self):
-        assert get_board_by_name.is_decorated_with_spin_it
+        assert get_board.is_decorated_with_spin_it
 
-    def test_calls_private_function_and_wraps_the_result(self, mocker):
-        mock_jira = Mock()
-        mock_private = mocker.patch("src.dzira.dzira._get_board_by_name")
+    def test_calls_jira_boards_and_wraps_the_result(self):
         board = Mock(raw={"location": {"displayName": "Foo"}})
-        mock_private.return_value = board
+        mock_jira = Mock(boards=Mock(return_value=[board]))
 
-        result = get_board_by_name(mock_jira, sentinel.name)
+        result = get_board(mock_jira, sentinel.key)
 
-        mock_private.assert_called_once_with(mock_jira, sentinel.name)
+        mock_jira.boards.assert_called_once_with(projectKeyOrID=sentinel.key)
         assert result.result == board
         assert "Foo" in result.stdout
+
+    def test_raises_when_no_board_found(self):
+        wrong_project_key = "foobar"
+        mock_jira = Mock(
+            boards=Mock(
+                side_effect=JIRAError(text=f"No project with key {wrong_project_key!r}")
+            )
+        )
+        with pytest.raises(Exception) as exc_info:
+            get_board(mock_jira, wrong_project_key)
+
+        assert "No project with key 'foobar'" in str(exc_info)
+
+    def test_raises_when_more_than_one_board_found(self):
+        ambiguous_key = "board"
+        mock_jira = Mock(
+            boards=Mock(
+                return_value=[Mock(raw={"location": {"displayName": f"Foo{n}"}}) for n in (1, 2)]
+            )
+        )
+
+        with pytest.raises(Exception) as exc_info:
+            get_board(mock_jira, ambiguous_key)
+
+        mock_jira.boards.assert_called_once_with(projectKeyOrID=ambiguous_key)
+        assert f"Found more than one board matching {ambiguous_key!r}" in str(exc_info)
+        assert f"Foo1, Foo2" in str(exc_info)
 
 
 class TestGetSprints:
@@ -491,22 +493,20 @@ class TestGetCurrentSprintWithIssues:
         mock_get_config = mocker.patch("src.dzira.dzira.get_config")
         mock_config = mock_get_config.return_value
         mock_get_jira = mocker.patch("src.dzira.dzira.get_jira")
-        mock_get_board_name = mocker.patch("src.dzira.dzira.get_board_name")
-        mock_get_board_by_name = mocker.patch("src.dzira.dzira.get_board_by_name")
+        mock_get_board = mocker.patch("src.dzira.dzira.get_board")
         mock_get_current_sprint = mocker.patch("src.dzira.dzira.get_current_sprint")
         mock_get_sprint_issues = mocker.patch("src.dzira.dzira.get_sprint_issues")
         jira = mock_get_jira.return_value.result
-        board = mock_get_board_by_name.return_value.result
+        board = mock_get_board.return_value.result
         sprint = mock_get_current_sprint.return_value.result
 
-        result = get_current_sprint_with_issues({}, sentinel.state, None)
+        result = get_issues({}, sentinel.state, None)
 
         assert result == mock_get_sprint_issues.return_value.result
         mock_get_config.assert_called_once()
         mock_get_jira.assert_called_once_with(mock_config)
-        mock_get_board_name.assert_called_once_with(mock_config)
-        mock_get_board_by_name.assert_called_once_with(
-            jira, mock_get_board_name.return_value
+        mock_get_board.assert_called_once_with(
+            jira, mock_config["key"]
          )
         mock_get_current_sprint.assert_called_once_with(jira, board, sentinel.state)
         mock_get_sprint_issues.assert_called_once_with(jira, sprint)
@@ -548,13 +548,13 @@ class TestLs:
             {"JIRA_TOKEN": "foo"}, "active", None
         )
 
-    @patch.dict(os.environ, {"JIRA_BOARD": "XYZ"}, clear=True)
+    @patch.dict(os.environ, {"JIRA_PROJECT_KEY": "XYZ"}, clear=True)
     @patch("src.dzira.dzira.get_current_sprint_with_issues")
     def test_has_access_to_context_provided_by_cli_group(self, mock_get_current_sprint_with_issues):
         runner.invoke(cli, ["--email", "foo@bar.com", "ls"])
 
         mock_get_current_sprint_with_issues.assert_called_once_with(
-            {"JIRA_BOARD": "XYZ", "JIRA_EMAIL": "foo@bar.com"}, "active", None
+            {"JIRA_PROJECT_KEY": "XYZ", "JIRA_EMAIL": "foo@bar.com"}, "active", None
         )
 
     def test_uses_state_option(self):
@@ -706,51 +706,48 @@ class TestSanitizeParams:
 
 @patch("src.dzira.dzira.get_sprint_issues")
 @patch("src.dzira.dzira.get_current_sprint")
-@patch("src.dzira.dzira.get_board_by_name")
-@patch("src.dzira.dzira.get_board_name")
+@patch("src.dzira.dzira.get_board")
 class TestEstablishIssue:
+    config = {"JIRA_PROJECT_KEY": "XYZ"}
+
     def test_returns_early_if_issue_is_digits_and_board_provided(
-        self,
-        mock_get_board_name,
-        mock_get_board_by_name,
-        mock_get_current_sprint,
-        mock_get_sprint_issues,
+            self,
+            mock_get_board,
+            mock_get_current_sprint,
+            mock_get_sprint_issues,
     ):
-        result = establish_issue(Mock(), {"JIRA_BOARD": "XYZ"}, D(issue="123"))
+        result = establish_issue(Mock(), self.config, D(issue="123"))
 
         assert result == D(issue="XYZ-123")
-        mock_get_board_name.assert_not_called()
-        mock_get_board_by_name.assert_not_called()
+        mock_get_board.assert_not_called()
         mock_get_current_sprint.assert_not_called()
         mock_get_sprint_issues.assert_not_called()
 
     def test_returns_early_if_issue_is_digits_and_board_not_provided(
-        self,
-        mock_get_board_name,
-        mock_get_board_by_name,
-        mock_get_current_sprint,
-        mock_get_sprint_issues,
+            self,
+            mock_get_board,
+            mock_get_current_sprint,
+            mock_get_sprint_issues,
     ):
-        result = establish_issue(Mock(), {"JIRA_BOARD": "XYZ"}, D(issue="123"))
+        result = establish_issue(Mock(), self.config, D(issue="123"))
 
         assert result == D(issue="XYZ-123")
-        mock_get_board_name.assert_not_called()
-        mock_get_board_by_name.assert_not_called()
+        mock_get_board.assert_not_called()
         mock_get_current_sprint.assert_not_called()
         mock_get_sprint_issues.assert_not_called()
 
     def test_raises_when_no_matching_issue_in_current_sprint(
-        self, _, __, ___, mock_get_sprint_issues
+            self, _, __, mock_get_sprint_issues
     ):
         mock_get_sprint_issues.return_value = Result(result=[])
 
         with pytest.raises(Exception) as exc_info:
-            establish_issue(Mock(), {}, D(issue="some description"))
+            establish_issue(Mock(), self.config, D(issue="some description"))
 
         assert "could not find any matching issues" in str(exc_info)
 
     def test_raises_when_more_than_one_matching_issue_in_current_sprint(
-        self, _, __, ___, mock_get_sprint_issues
+            self, _, __, mock_get_sprint_issues
     ):
         mock_get_sprint_issues.return_value = Result(
             result=[
@@ -760,16 +757,12 @@ class TestEstablishIssue:
         )
 
         with pytest.raises(Exception) as exc_info:
-            establish_issue(Mock(), {}, D(issue="some description"))
+            establish_issue(Mock(), self.config, D(issue="some description"))
 
         assert "found more than one matching issue" in str(exc_info)
 
     def test_returns_updated_payload_with_issue_key_when_issue_found_in_the_sprint(
-        self,
-        _,
-        __,
-        ___,
-        mock_get_sprint_issues,
+            self, _, __, mock_get_sprint_issues,
     ):
         mock_get_sprint_issues.return_value = Result(
             result= [
@@ -778,7 +771,7 @@ class TestEstablishIssue:
             ]
         )
 
-        result = establish_issue(Mock(), {}, D(issue="some description"))
+        result = establish_issue(Mock(), self.config, D(issue="some description"))
 
         assert result == D(issue="1")
 

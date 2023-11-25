@@ -174,55 +174,52 @@ def get_jira(config: dict) -> Result:
     return Result(stdout=msg, result=jira)
 
 
-# TODO: remove this
-def get_board_name(config: dict) -> str:
-    return f'{config["JIRA_BOARD"]} board'
-
-
-def _get_board_by_name(jira: JIRA, name: str) -> Board:
-    if boards := jira.boards(name=name):
-        # TODO if len > 1, raise and print all found boards to prevent confusion
-        if len(boards) > 1:
-            info = "\n".join([f"\t - {b.name}, id: {b.id}" for b in boards])
-            raise Exception(
-                f"Found more than one matching board:\n{info}\n"
-                "Use more precise name or the board id"
-            )
-        return boards[0]
-    raise Exception(f"could not find any board matching {name!r}")
-
-
-# TODO: Should take board_id as well; so rename the func to more generic
 @spin_it("Getting board")
-def get_board_by_name(jira: JIRA, name: str) -> Result:
-    board = _get_board_by_name(jira, name)
+def get_board(jira: JIRA, key: str) -> Result:
+    try:
+        boards = jira.boards(projectKeyOrID=key)
+    except JIRAError as exc_info:
+        raise Exception(str(exc_info))
+    if len(boards) > 1:
+        raise Exception(
+            f"Found more than one board matching {key!r}:\n"
+            f"{', '.join(b.raw['location']['displayName'] for b in boards)}"
+        )
     return Result(
-        result=board,
-        stdout=f'{board.raw["location"]["displayName"]} • id: {board.id}'
+        result=boards[0],
+        stdout=f'{boards[0].raw["location"]["displayName"]}'
     )
 
 
-def get_sprints(jira: JIRA, board: Board, state: str) -> list:
+def _get_sprints(jira: JIRA, board: Board, state: str) -> list:
     if sprints := jira.sprints(board_id=board.id, state=state):
         return sprints
     raise Exception(f"could not find any sprints for board {board.name!r}")
 
 
-@spin_it("Getting sprint")
-def get_current_sprint(jira: JIRA, board: Board, state: str) -> Result:
-    # todo: if len > 1 raise / or enable choosing
-    sprints = get_sprints(jira, board, state)
+def _get_first_sprint_matching_state(jira: JIRA, board: Board, state: str = "active", **_) -> Sprint:
+    sprints = _get_sprints(jira, board, state)
     if len(sprints) > 1:
         info = "\n".join([f"\t - {s.name}, id: {s.id}" for s in sprints])
-        # todo: change 'matching' to variable holding the actual state being used for search
-        # probably: 'active'
         raise Exception(
-            f"Found more than one matching sprint:\n{info}\n"
+            f"Found more than one {state} sprint:\n{info}\n"
             "Use sprint id to get unambiguous result"
         )
-    sprint = sprints[0]
-    fmt = lambda d: datetime.strptime(d, "%Y-%m-%dT%H:%M:%S.%fZ").strftime("%a, %b %d")
-    out = f"{sprint.name} • id: {sprint.id}; {fmt(sprint.startDate)} -> {fmt(sprint.endDate)}"
+    return sprints[0]
+
+
+def _get_sprint_from_id(jira: JIRA, sprint_id: int, **_) -> Sprint:
+    try:
+        return jira.sprint(sprint_id)
+    except JIRAError as exc:
+        raise Exception(str(exc))
+
+
+@spin_it("Getting sprint")
+def get_sprint(jira: JIRA, payload: D) -> Result:
+    fn = _get_sprint_from_id if payload.has("sprint_id") else _get_first_sprint_matching_state
+    sprint = fn(jira, **payload)
+    out = process_sprint_out(sprint)
     return Result(result=sprint, stdout=out)
 
 
@@ -280,15 +277,14 @@ def update_worklog(worklog: Worklog, time: str, comment: str, **_) -> Result:
 
 @click.group()
 @click.option("-f", "--file", help=f"Config file path", type=click.Path())
-@click.option("-b", "--board", help="JIRA_BOARD value", envvar="JIRA_BOARD")
-# @click.option("-i", "--board-id", help="JIRA_BOARD_ID value", envvar="JIRA_BOARD_ID")
+@click.option("-k", "--key", help="JIRA_PROJECT_KEY value", envvar="JIRA_PROJECT_KEY")
 @click.option("-t", "--token", help="JIRA_TOKEN value", envvar="JIRA_TOKEN")
 @click.option("-m", "--email", help="JIRA_EMAIL value", envvar="JIRA_EMAIL")
 @click.option("-s", "--server", help="JIRA_SERVER value", envvar="JIRA_SERVER")
 @click.option("--spin/--no-spin", help="Control the spinner", default=True)
 @click.help_option("-h", "--help")
 @click.pass_context
-def cli(ctx, file, board, token, email, server, spin):
+def cli(ctx, file, key, token, email, server, spin):
     """
     Configure JIRA connection by using default config files, environment
     variables, or options below. The discovery of default config files uses
@@ -306,20 +302,19 @@ def cli(ctx, file, board, token, email, server, spin):
     - JIRA_SERVER (the servers where your Jira instance is hosted on),
     - JIRA_EMAIL (the email you use to log into Jira),
     - JIRA_TOKEN (your Jira token),
-    - JIRA_BOARD (the default Jira board to use)
+    - JIRA_PROJECT_KEY (your team's project key)
     """
     global use_spinner; use_spinner = spin
 
-    # TODO: add JIRA_BOARD_ID
     ctx.ensure_object(dict)
     cfg = {
         k: v
         for k, v in dict(
-            file=file,
-            JIRA_BOARD=board,
-            JIRA_TOKEN=token,
-            JIRA_EMAIL=email,
-            JIRA_SERVER=server,
+                file=file,
+                JIRA_EMAIL=email,
+                JIRA_PROJECT_KEY=key,
+                JIRA_SERVER=server,
+                JIRA_TOKEN=token,
         ).items()
         if v is not None
     }
