@@ -1,4 +1,6 @@
 *.egg-info/
+*.json
+*.png
 .coverage
 .lsp.workspace
 .pytest_cache
