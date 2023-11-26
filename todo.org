@@ -1,26 +1,9 @@
-* TODO spending with -s while updating a log
-
-* DONE using only -s like =-s12.00= which produced =13:43:36  Spent 27036w 3d 1h 43m in PA-107...=
-CLOSED: [2023-11-03 Fri 10:36]
-
-* DONE add spinner (as decorator on get jira and establish issue + action)
-
 * TODO test on multiple platforms: [0/2]
 
 - [ ] MacOS
 - [ ] Windows
 
 * TODO add Docker tests for installing the package with pip, possibly on all OS images
-
-* TODO fix getting board by name -- when multiple found, print what was found and show ids; also add option to provide board id (int)
-
-* TODO Add options:
-- to config:
-  + JIRA_BOARD_ID
-- to dzira:
-  + =-b= => board id
-- to ls:
-  + =-s= => sprint id
 
 * TODO refactor tests to use patches as fixtures
   
@@ -43,7 +26,30 @@ JiraError HTTP 404 url: https://anaconda.atlassian.net/rest/api/2/issue/PA-349/w
 #+end_quote
 
 
-* TODO Sth wrong with validating time:
+* TODO Add epics to report!!!
+
+* DONE spending with -s while updating a log
+CLOSED: [2023-11-26 Sun 21:28]
+
+* DONE using only -s like =-s12.00= which produced =13:43:36  Spent 27036w 3d 1h 43m in PA-107...=
+CLOSED: [2023-11-03 Fri 10:36]
+
+* DONE add spinner (as decorator on get jira and establish issue + action)
+
+* DONE fix getting board by name -- when multiple found, print what was found and show ids; also add option to provide board id (int)
+CLOSED: [2023-11-26 Sun 21:28]
+
+* DONE Add options:
+CLOSED: [2023-11-26 Sun 21:28]
+- to config:
+  + JIRA_BOARD_ID
+- to dzira:
+  + =-b= => board id
+- to ls:
+  + =-s= => sprint id
+
+* DONE Sth wrong with validating time:
+CLOSED: [2023-11-26 Sun 21:27]
 
 #+begin_quote
  (jira:3.11.5) ~/dev/pa/dzira [dev]: dzira log 350 -w 14813 -t 20m
