@@ -15,6 +15,7 @@ from src.dzira.dzira import (
     VALIDATE_DATE_FORMATS,
     Result,
     _get_sprints,
+    _seconds_to_hour_minute_fmt,
     _update_worklog,
     add_worklog,
     c,
@@ -26,9 +27,12 @@ from src.dzira.dzira import (
     get_config_from_file,
     get_issues,
     get_issues,
+    get_issues_with_work_logged_on_date,
     get_jira,
     get_sprint,
     get_sprint_and_issues,
+    get_user,
+    get_user_worklogs_from_date,
     get_worklog,
     hide_cursor,
     is_valid_hour,
@@ -38,8 +42,10 @@ from src.dzira.dzira import (
     matches_time_re,
     perform_log_action,
     process_sprint_out,
+    report,
     sanitize_params,
     show_cursor,
+    show_report,
     update_worklog,
     validate_date,
     validate_hour,
@@ -107,11 +113,12 @@ class TestCursorHelpers:
 
 
 class TestResult:
-    def test_instantiates_with_default_values_for_result_and_stdout(self):
+    def test_instantiates_with_default_values_for_result_stdout_and_data(self):
         result = Result()
 
         assert result.result is None
         assert result.stdout == ""
+        assert result.data == D()
 
     def test_instantiates_with_given_values(self):
         result = Result(result=sentinel.result, stdout="foo")
@@ -120,8 +127,10 @@ class TestResult:
         assert result.stdout == "foo"
 
 
+
 class TestD:
-    d = D(a=1, b=2, c=3)
+    def setup(self):
+        self.d = D(a=1, b=2, c=3)
 
     def test_inherits_from_dict(self):
         assert isinstance(D(), dict)
@@ -146,6 +155,11 @@ class TestD:
         assert self.d.update("d", 4, "e", 5) == D({**self.d, "d": 4, "e": 5})
         assert self.d.update(d=4, e=5) == D({**self.d, "d": 4, "e": 5})
 
+    def test_update_accepts_function_as_value_and_calls_it_with_existing_value(self):
+        assert self.d.update("a", lambda x: x * 10) == D({**self.d, "a": 10})
+        assert self.d.update("b", lambda x: x + 2) == D({**self.d, "b": 4})
+        assert self.d.update("absent", lambda x: x + 1 if x is not None else 1) == D({**self.d, "absent": 1})
+
     def test_update_raises_when_odd_number_of_args_given(self):
         with pytest.raises(Exception) as exc_info:
             self.d.update("a")
@@ -158,6 +172,20 @@ class TestD:
 
     def test_repr(self):
         assert repr(D(a=1)) == "betterdict({'a': 1})"
+
+    def test_exposes_keys_as_attributes_and_raises_attributeerror_for_missing_attr(self):
+        assert self.d.a == 1
+        assert self.d.b == 2
+        assert self.d.c == 3
+
+        with pytest.raises(AttributeError) as exc_info:
+            self.d.x
+
+        assert "'D' object has no attribute 'x'" in str(exc_info.value)
+
+    def test_without_returns_new_instance_of_betterdict_without_keys_matching_args(self):
+        assert self.d.without("a") == D(b=2, c=3)
+        assert self.d.without("a", "c") == D(b=2)
 
 
 class TestSpinIt:
@@ -384,7 +412,7 @@ class TestAddWorklog:
         mock_jira = Mock(add_worklog=Mock(return_value=mock_worklog))
 
         result1 = add_worklog(mock_jira, "333", time="2h", date=sentinel.date)
-        result2 = add_worklog(mock_jira, "333", seconds=f"{60 * 60 * 2}", comment="blah!")
+        result2 = add_worklog(mock_jira, "333", seconds=60 * 60 * 2, comment="blah!")
 
         assert mock_jira.add_worklog.call_args_list == (
             [
@@ -398,7 +426,7 @@ class TestAddWorklog:
                 call(
                     issue="333",
                     timeSpent=None,
-                    timeSpentSeconds="7200",
+                    timeSpentSeconds=7200,
                     comment="blah!",
                     started=None,
                 ),
@@ -558,20 +586,21 @@ class TestGetSprintAndIssues:
         assert result == mock_get_issues.return_value.result
 
 
-runner = CliRunner()
+class CliTest:
+    runner = CliRunner()
 
 
-class TestCli:
+class TestCli(CliTest):
     def test_help(self):
-        result = runner.invoke(cli, ["--help"])
+        result = self.runner.invoke(cli, ["--help"])
 
         assert result.exit_code == 0
         assert "Configure JIRA connection" in result.output
 
 
-class TestLs:
+class TestLs(CliTest):
     def test_help(self):
-        result = runner.invoke(ls, ["--help"])
+        result = self.runner.invoke(ls, ["--help"])
 
         assert result.exit_code == 0
         assert "List issues from the current sprint" in result.output
@@ -585,7 +614,7 @@ class TestLs:
         )
         mock_show_issues = mocker.patch("src.dzira.dzira.show_issues")
 
-        result = runner.invoke(cli, ["--token", "foo", "ls"])
+        result = self.runner.invoke(cli, ["--token", "foo", "ls"])
 
         assert result.exit_code == 0
         mock_show_issues.assert_called_once_with(sentinel.issues)
@@ -600,7 +629,7 @@ class TestLs:
         mock_get_config = mocker.patch("src.dzira.dzira.get_config")
         mocker.patch("src.dzira.dzira.get_jira", Mock(return_value=Mock(result=sentinel.jira)))
 
-        runner.invoke(cli, ["--email", "foo@bar.com", "ls"])
+        self.runner.invoke(cli, ["--email", "foo@bar.com", "ls"])
 
         mock_get_sprint_and_issues.assert_called_once_with(
             sentinel.jira, D(state="active", sprint_id=None, **mock_get_config.return_value)
@@ -616,7 +645,7 @@ class TestLs:
         mock_get_sprint_and_issues.return_value = sentinel.issues
         mock_show_issues = mocker.patch("src.dzira.dzira.show_issues")
 
-        result = runner.invoke(cli, ["ls", "--state", "closed"])
+        result = self.runner.invoke(cli, ["ls", "--state", "closed"])
 
         assert result.exit_code == 0
         mock_show_issues.assert_called_once_with(sentinel.issues)
@@ -633,7 +662,7 @@ class TestLs:
         mock_get_sprint_and_issues.return_value = sentinel.issues
         mock_show_issues = mocker.patch("src.dzira.dzira.show_issues")
 
-        result = runner.invoke(cli, ["ls", "--sprint-id", "42"])
+        result = self.runner.invoke(cli, ["ls", "--sprint-id", "42"])
 
         assert result.exit_code == 0
         mock_show_issues.assert_called_once_with(sentinel.issues)
@@ -935,9 +964,9 @@ class TestLogAction:
         mock_add_worklog.assert_called_once_with(sentinel.jira, **payload)
 
 
-class TestLog:
+class TestLog(CliTest):
     def test_help(self):
-        result = runner.invoke(log, ["--help"])
+        result = self.runner.invoke(log, ["--help"])
 
         assert "Log time spent" in result.output
 
@@ -954,7 +983,7 @@ class TestLog:
         mock_jira = mock_get_jira.return_value.result
         mock_config = mock_get_config.return_value
 
-        result = runner.invoke(cli, ["log", "123", "-t", "2h"])
+        result = self.runner.invoke(cli, ["log", "123", "-t", "2h"])
 
         assert result.exit_code == 0
         mock_sanitize_params.assert_called_once()
@@ -971,6 +1000,293 @@ class TestLog:
         mock_perform_log_action.assert_called_once_with(
             mock_jira, mock_establish_issue.return_value
         )
+
+
+class TestGetUser:
+    mock_config = {"JIRA_EMAIL": sentinel.email}
+    user = Mock(displayName="User")
+
+    def test_is_decorated_correctly(self):
+        assert get_user.is_decorated_with_spin_it
+
+    def test_find_user_from_email(self):
+        mock_jira = Mock(search_users=Mock(return_value=[self.user]))
+
+        result = get_user(mock_jira, self.mock_config)
+
+        assert type(result) == Result
+        assert result.result == self.user
+        assert result.stdout == "User"
+        mock_jira.search_users.assert_called_once_with(query=sentinel.email)
+
+    def test_raises_when_no_user_found(self):
+        mock_jira = Mock(search_users=Mock(return_value=[]))
+
+        with pytest.raises(Exception) as exc_info:
+            get_user(mock_jira, self.mock_config)
+
+        assert "Could not find users matching given email address" in str(exc_info.value)
+
+    def test_raises_when_more_than_one_user_found(self):
+        users = [Mock(displayName=f"User{n}") for n in (1, 2, 3)]
+        mock_jira = Mock(search_users=Mock(return_value=users))
+
+        with pytest.raises(Exception) as exc_info:
+            get_user(mock_jira, self.mock_config)
+
+        assert "User1, User2, User3" in str(exc_info.value)
+
+    def test_catches_jira_errors_and_raises_readable_error(self):
+        mock_jira = Mock(search_users=Mock(side_effect=Exception("foo")))
+
+        with pytest.raises(Exception) as exc_info:
+            get_user(mock_jira, self.mock_config)
+
+        assert "foo" in str(exc_info.value)
+
+
+class TestGetIssuesWithWorkLoggedOnDate:
+    def setup(self):
+        self.mock_jira = Mock(search_issues=Mock(return_value=[sentinel.issue]))
+
+    def test_is_decorated_correctly(self):
+        assert get_issues_with_work_logged_on_date.is_decorated_with_spin_it
+
+    def test_searching_issues_with_work_logged_after_today_has_begun(self):
+        result = get_issues_with_work_logged_on_date(self.mock_jira, None)
+
+        self.mock_jira.search_issues.assert_called_once_with("worklogDate > startOfDay()")
+        assert type(result) == Result
+        assert result.result == self.mock_jira.search_issues.return_value
+        assert "Found 1 issue with work logged on" in result.stdout
+
+    def test_searching_issues_with_work_logged_for_given_date(self):
+        get_issues_with_work_logged_on_date(self.mock_jira, datetime.datetime(2023, 11, 25))
+
+        self.mock_jira.search_issues.assert_called_once_with("worklogDate = 2023-11-25")
+
+    def test_catches_jira_errors_and_raises_a_readable_exception(self):
+        mock_jira = Mock(search_issues=Mock(side_effect=JIRAError(text="foo")))
+
+        with pytest.raises(Exception) as exc_info:
+            get_issues_with_work_logged_on_date(mock_jira, None)
+
+        assert "foo" in str(exc_info.value)
+
+    def test_passes_date_in_data_field_of_result(self):
+        result = get_issues_with_work_logged_on_date(
+            self.mock_jira, datetime.datetime(2023, 11, 25)
+        )
+
+        assert result.data.report_date == datetime.datetime(2023, 11, 25)
+
+
+class TestGetUserWorklogsFromDate:
+    def setup(self):
+        self.user = Mock(accountId="123")
+        self.worklog1 = Mock(
+            started="2023-11-26T13:42:16.000",
+            raw={
+                "timeSpent": "30m",
+                "comment": "ONLY ONE MATCHING",
+                "timeSpentSeconds": 30 * 60,
+            },
+            author=Mock(accountId="123")
+        )
+        self.worklog2 = Mock(
+            started="2023-11-25T01:42:00.000",
+            raw={
+                "timeSpent": "1h 15m",
+                "comment": "DATE BEFORE",
+                "timeSpentSeconds": (60 * 60) + (15 * 60),
+            },
+            author=Mock(accountId="123")
+        )
+        self.worklog3 = Mock(
+            started="2023-11-26T17:24:00.000",
+            raw={
+                "timeSpent": "2h",
+                "comment": "WRONG AUTHOR",
+                "timeSpentSeconds": 2 * 60 * 60,
+            },
+            author=Mock(accountId="999")
+        )
+        self.worklog4 = Mock(
+            started="2023-11-27T01:42:00.000",
+            raw={
+                "timeSpent": "1h 15m",
+                "comment": "DATE AFTER",
+                "timeSpentSeconds": (60 * 60) + (15 * 60),
+            },
+            author=Mock(accountId="123")
+        )
+        self.issue1 = Mock(id=1, raw={"key": "Issue-1", "fields": {"summary": "Foo bar"}})
+        self.issue2 = Mock(id=2, raw={"key": "Issue-2", "fields": {"summary": "Baz quux"}})
+        self.issues = [self.issue1, self.issue2]
+        self.worklogs = [self.worklog1, self.worklog2, self.worklog3, self.worklog4]
+        self.mock_jira = Mock(
+            worklogs=Mock(
+                side_effect=[
+                    (self.worklog1, self.worklog2),  # issue 1
+                    (self.worklog3, self.worklog3)   # issue 2
+                ]
+            )
+        )
+
+    def test_is_decorated_correctly(self):
+        assert get_user_worklogs_from_date.is_decorated_with_spin_it
+
+    def test_gets_worklogs_for_each_issue(self):
+        get_user_worklogs_from_date(
+            self.mock_jira,
+            self.user,
+            Result(result=self.issues, data=D(report_date=datetime.datetime(2023, 11, 26, 0, 0)))
+        )
+
+        assert self.mock_jira.worklogs.call_args_list == [
+            call(self.issue1.id), call(self.issue2.id)
+        ]
+
+    def test_gets_worklogs_matching_author_and_date(self):
+        result = get_user_worklogs_from_date(
+            self.mock_jira,
+            self.user,
+            Result(result=self.issues, data=D(report_date=datetime.datetime(2023, 11, 26, 0, 0)))
+        )
+
+        assert result.result == D({"[Issue-1] Foo bar": [self.worklog1]})
+        assert "Found 1 worklog" in result.stdout
+
+    def test_catches_jira_errors_and_raises_readable_exception(self):
+        mock_jira = Mock(worklogs=Mock(side_effect=Exception("foo")))
+
+        with pytest.raises(Exception) as exc_info:
+            get_user_worklogs_from_date(mock_jira, self.user, Result(result=[Mock()]))
+
+        assert "foo" in str(exc_info.value)
+
+
+class TestSecondsToHourMinutFmt:
+    @pytest.mark.parametrize(
+        "input,expected",
+        [
+            (3600, "1h 00m"),
+            (3659, "1h 00m"),
+            (3660, "1h 01m"),
+            (360,  "0h 06m"),
+            (361,  "0h 06m"),
+        ]
+    )
+    def test_converts_seconds_to_h_m_format(self, input, expected):
+        assert _seconds_to_hour_minute_fmt(input) == expected
+
+
+class TestShowReport:
+    def setup(self):
+        self.user = Mock(accountId="123")
+        self.worklog1 = Mock(
+            raw={
+                "started": "2023-11-26T13:42:16.000+0100",
+                "timeSpent": "30m",
+                "comment": "task a",
+                "timeSpentSeconds": 30 * 60,
+            },
+            author=Mock(accountId="123"),
+            id="1"
+        )
+        self.worklog2 = Mock(
+            raw={
+                "started":"2023-11-26T15:42:00.000+0100",
+                "timeSpent": "1h 15m",
+                "comment": "task b",
+                "timeSpentSeconds": (60 * 60) + (15 * 60),
+            },
+            author=Mock(accountId="123"),
+            id="2"
+        )
+
+    @patch("src.dzira.dzira.print")
+    @patch("src.dzira.dzira.tabulate")
+    def test_uses_tabulate_to_show_the_report_with_worklog_id_timestamp_timespent_and_comment(
+            self, mock_tabulate, mock_print
+    ):
+        show_report(D({"issue1": [self.worklog1], "issue2": [self.worklog2]}))
+
+        assert mock_tabulate.call_args_list == [
+            call([["[1]", "13:42:16", ":   30m", "task a"]], maxcolwidths=[None, None, None, 60]),
+            call([["[2]", "15:42:00", ":1h 15m", "task b"]], maxcolwidths=[None, None, None, 60])
+        ]
+        mock_print.assert_has_calls(
+            [
+                call(c("^bold", "issue1"), "(0h 30m)"),
+                call(c("^bold", "issue2"), "(1h 15m)"),
+                call(mock_tabulate.return_value),
+             ],
+            any_order=True
+        )
+
+
+class TestReport(CliTest):
+    def test_help(self):
+        result = self.runner.invoke(report, ["--help"])
+
+        assert "Show work logged for today or for DATE" in result.output
+
+    @patch("src.dzira.dzira.show_report")
+    @patch("src.dzira.dzira.get_user_worklogs_from_date")
+    @patch("src.dzira.dzira.get_issues_with_work_logged_on_date")
+    @patch("src.dzira.dzira.get_user")
+    @patch("src.dzira.dzira.get_jira")
+    @patch("src.dzira.dzira.get_config")
+    def test_runs_stuff_in_order(
+            self,
+            mock_get_config,
+            mock_get_jira,
+            mock_get_user,
+            mock_get_issues_with_work_logged_on_date,
+            mock_get_user_worklogs_from_date,
+            mock_show_report
+    ):
+        mock_config = mock_get_config.return_value
+        mock_jira = mock_get_jira.return_value.result
+
+        result = self.runner.invoke(report, ["--date", "2023-11-26"])
+
+        assert result.exit_code == 0
+
+        mock_get_config.assert_called_once()
+        mock_get_jira.assert_called_once_with(mock_config)
+        mock_get_user.assert_called_once_with(mock_jira, mock_config)
+        mock_get_issues_with_work_logged_on_date.assert_called_once_with(
+            mock_jira, datetime.datetime(2023, 11, 26, 0, 0)
+        )
+        mock_get_user_worklogs_from_date.assert_called_once_with(
+            mock_jira,
+            mock_get_user.return_value.result,
+            mock_get_issues_with_work_logged_on_date.return_value
+        )
+        mock_show_report.assert_called_once_with(
+            mock_get_user_worklogs_from_date.return_value.result
+        )
+
+    @patch("src.dzira.dzira.get_user", Mock())
+    @patch("src.dzira.dzira.get_jira", Mock(return_value=Mock(result=sentinel.jira)))
+    @patch("src.dzira.dzira.get_config", Mock(return_value=Mock(result=sentinel.user)))
+    @patch("src.dzira.dzira.show_report")
+    @patch("src.dzira.dzira.get_user_worklogs_from_date")
+    @patch("src.dzira.dzira.get_issues_with_work_logged_on_date")
+    def test_does_not_run_show_report_when_no_worklogs_found(
+            self,
+            mock_get_issues_with_work_logged_on_date,
+            mock_get_user_worklogs_from_date,
+            mock_show_report
+    ):
+        mock_get_issues_with_work_logged_on_date.return_value = Result()
+
+        self.runner.invoke(report, ["--date", "2023-11-26"])
+
+        assert not mock_get_user_worklogs_from_date.called
+        assert not mock_show_report.called
 
 
 class TestMain:

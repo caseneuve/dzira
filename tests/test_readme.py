@@ -1,47 +1,39 @@
 from pathlib import Path
 
-import pytest
 from click.testing import CliRunner
 
 from src.dzira.dzira import cli
 
+
 runner = CliRunner()
+readme = Path("README.md").read_text()
 
 
-@pytest.fixture
-def readme():
-    return Path("README.md")
-
-
-def test_readme_exists(readme):
-    assert readme.is_file()
-
-
-def test_readme_contains_actual_help_message(readme):
-    help = runner.invoke(cli, ["--help"])
-
-    text = readme.read_text().replace(" ", "").replace("\n", "")
-    for line in help.output.split("\n")[1:]:
-        assert line.replace(" ", "")[:50] in text
-
-
-def test_readme_contains_actual_ls_help(readme):
-    help = runner.invoke(cli, ["ls", "--help"])
-
-    text = readme.read_text().replace(" ", "").replace("\n", "")
-    for line in help.output.split("\n")[1:]:
-        assert line.replace(" ", "")[:50] in text
-
-
-def test_readme_contains_actual_log_help(readme):
-    help = runner.invoke(cli, ["log", "--help"])
-
-    import pprint
-    pprint.pprint(readme.read_text())
-    text = readme.read_text().replace(" ", "").replace("\n", "")
+def assert_help_in_readme(help):
+    text = readme.replace(" ", "").replace("\n", "")
     for line in help.output.split("\n")[1:]:
         assert line.replace(" ", "").replace("\b", "")[:50] in text
 
 
-def test_readme_contains_actual_report_help(readme):
-    pytest.xfail("TODO")
+def test_readme_exists():
+    assert Path("README.md").is_file()
+
+
+def test_readme_contains_actual_help_message():
+    help = runner.invoke(cli, ["--help"])
+    assert_help_in_readme(help)
+
+
+def test_readme_contains_actual_ls_help():
+    help = runner.invoke(cli, ["ls", "--help"])
+    assert_help_in_readme(help)
+
+
+def test_readme_contains_actual_log_help():
+    help = runner.invoke(cli, ["log", "--help"])
+    assert_help_in_readme(help)
+
+
+def test_readme_contains_actual_report_help():
+    help = runner.invoke(cli, ["report", "--help"])
+    assert_help_in_readme(help)

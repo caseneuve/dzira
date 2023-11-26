@@ -6,7 +6,7 @@ import re
 import subprocess
 import sys
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from functools import wraps
 from itertools import cycle
@@ -17,7 +17,7 @@ import click
 from dotenv import dotenv_values
 from jira import JIRA
 from jira.exceptions import JIRAError
-from jira.resources import Board, Issue, Sprint, Worklog
+from jira.resources import Board, Sprint, User, Worklog
 from tabulate import tabulate
 
 
@@ -48,12 +48,6 @@ def show_cursor():
     print("\033[?25h", end="", flush=True)
 
 
-@dataclass
-class Result:
-    result: Any = None
-    stdout: str = ""
-
-
 class D(dict):
     def __call__(self, *keys) -> Iterable:
         if keys:
@@ -61,22 +55,41 @@ class D(dict):
         else:
             return self.values()
 
+    def __getattr__(self, key):
+        try:
+            return self[key]
+        except KeyError:
+            raise AttributeError(f"'D' object has no attribute {key!r}")
+
+    def _update(self, k, v):
+        self[k] = v(self.get(k)) if callable(v) else v
+
     def update(self, *args, **kwargs):
         if len(args) % 2 != 0:
             raise Exception(
                 f"Provide even number of key-value args, need a value for key: {args[-1]!r}"
             )
         for i in range(0, len(args), 2):
-            self[args[i]] = args[i + 1]
+            self._update(args[i], args[i + 1])
         for k, v in kwargs.items():
-            self[k] = v
+            self._update(k, v)
         return self
 
     def has(self, k):
         return self.get(k) is not None
 
+    def without(self, *args):
+        return D({k: v for k, v in self.items() if k not in args})
+
     def __repr__(self):
         return f"betterdict({dict(self)})"
+
+
+@dataclass
+class Result:
+    result: Any = None
+    stdout: str = ""
+    data: D = field(default_factory=D)
 
 
 def spin_it(msg="", done="✓", fail="✗"):
@@ -649,67 +662,132 @@ def log(ctx, **_):
     perform_log_action(jira, payload)
 
 
-@cli.command(hidden=True)
-@click.pass_context
-def report(ctx):
-    """
-    TODO:
-    - [ ] accept date
-    - [ ] accept flag to show rather full sprint, than a day
-    - [ ] tests! + break into smaller funcs
-    """
-    config = get_config(config=ctx.obj)
-    jira = get_jira(config).result
-    users = jira.search_users(query=config["JIRA_EMAIL"])
-    user = users[0]
-    issues = jira.search_issues("worklogDate >= startOfDay()")
-    today = datetime.combine(date.today(), datetime.min.time())
-    worklogs = {}
+##################################################
+#  REPORT command
+##################################################
 
-    for issue in issues:
-        wks = jira.worklogs(issue.id)
-        key = issue.raw["key"]
-        summary = issue.raw["fields"]["summary"]
 
-        worklogs[f"{key} {summary}"] = [
-            w for w in wks
-            if (
-                    (w.author.accountId == user.accountId) and
-                    (datetime.strptime(w.started.split(".")[0], "%Y-%m-%dT%H:%M:%S") >= today)
-            )
-        ]
+@spin_it("Getting user")
+def get_user(jira: JIRA, config: dict) -> Result:
+    try:
+        users = jira.search_users(query=config["JIRA_EMAIL"])
+    except Exception as exc:
+        raise Exception(str(exc))
+    if len(users) > 1:
+        raise Exception(f"Found more than one user\n{', '.join(u.displayName for u in users)}")
+    if users == []:
+        raise Exception("Could not find users matching given email address")
 
+    return Result(result=users[0], stdout=users[0].displayName)
+
+
+@spin_it("Getting issues")
+def get_issues_with_work_logged_on_date(jira: JIRA, report_date: datetime | None) -> Result:
+    if report_date is not None:
+        query = f"worklogDate = {report_date:%Y-%m-%d}"
+    else:
+        query = f"worklogDate > startOfDay()"
+        report_date = datetime.combine(date.today(), datetime.min.time())
+    try:
+        issues = jira.search_issues(query)
+    except JIRAError as exc:
+        raise Exception(str(exc))
+
+    return Result(
+        result=issues,
+        data=D(report_date=report_date),
+        stdout=(
+            f"Found {len(issues)} issue{'s' if len(issues) != 1 else ''} "
+            f"with work logged on {report_date:%a, %b %d}"
+        )
+    )
+
+
+@spin_it("Getting worklogs")
+def get_user_worklogs_from_date(jira: JIRA, user: User, issues: Result) -> Result:
+    worklogs = D(counter=0)
+
+    for issue in issues.result:
+        try:
+            issue_worklogs = jira.worklogs(issue.id)
+            matching = [
+                w for w in issue_worklogs
+                if (
+                        (w.author.accountId == user.accountId)
+                        and (
+                            issues.data.report_date
+                            <= datetime.strptime(w.started.split(".")[0], "%Y-%m-%dT%H:%M:%S")
+                            < (issues.data.report_date + timedelta(days=1))
+                        )
+                )
+            ]
+            if matching:
+                key = issue.raw["key"]
+                summary = issue.raw["fields"]["summary"]
+                # worklogs[f"[{key}] {summary}"] = matching
+                worklogs.update(f"[{key}] {summary}", matching, counter=lambda x: x + (len(matching)))
+        except Exception as exc:
+            raise Exception(str(exc))
+
+    return Result(
+        result=worklogs.without("counter"),
+        stdout=(
+            f"Found {worklogs.counter} worklog{'s' if worklogs.counter != 1 else ''} "
+            "matching author and date"
+        )
+    )
+
+
+def _seconds_to_hour_minute_fmt(seconds):
+    hours, remainder = divmod(seconds, 3600)
+    minutes, _ = divmod(remainder, 60)
+    return f"{hours}h {minutes:02}m"
+
+
+def show_report(worklogs: D) -> None:
     total_time = 0
-
-    def seconds_to_hour_minute_fmt(seconds):
-        hours, remainder = divmod(seconds, 3600)
-        minutes, _ = divmod(remainder, 60)
-        return f"{hours}h {minutes:02}m"
-
-    for ii in worklogs:
-        print()
-        print(c("^bold", ii))
-        print("="*len(ii))
+    for issue in worklogs:
         this_total_time = 0
-        for w in worklogs[ii]:
+        rows = []
+        for w in worklogs[issue]:
             started, time_spent, comment, time_spent_seconds = D(w.raw)(
                 "started", "timeSpent", "comment", "timeSpentSeconds"
             )
             total_time += time_spent_seconds
             this_total_time += time_spent_seconds
+            local_timestamp = datetime.strptime(started, '%Y-%m-%dT%H:%M:%S.%f%z').astimezone()
+            formatted_time = local_timestamp.strftime('%H:%M:%S')
+            row = [f"[{w.id}]", formatted_time, f":{time_spent:>6}", comment or ""]
+            rows.append(row)
 
-            timestamp_obj = datetime.strptime(started, '%Y-%m-%dT%H:%M:%S.%f%z')
-            local_time = timestamp_obj.astimezone()
-            formatted_time = local_time.strftime('%H:%M:%S')
-            print(f"{formatted_time}  {time_spent:>6}  {comment}")
-
-        print("-"*len(ii))
-        print(f"{'total':>8}  {seconds_to_hour_minute_fmt(this_total_time)}")
+        print()
+        print(c("^bold", issue), f"({_seconds_to_hour_minute_fmt(this_total_time)})")
+        print(tabulate(rows, maxcolwidths=[None, None, None, 60]))
 
     if worklogs:
-        print(f"\nTotal spent time: {seconds_to_hour_minute_fmt(total_time)}")
+        print(f"\n{c('^bold', 'Total spent time')}: {_seconds_to_hour_minute_fmt(total_time)}\n")
+
+
+# TODO:
+# - [ ] sprint option
+# - [ ] save to csv, json format
+@cli.command
+@click.pass_context
+@click.option("-d", "--date", "report_date", help="Date to show report for", type=click.DateTime())
+@click.help_option("-h", "--help")
+def report(ctx, report_date):
+    """
+    Show work logged for today or for DATE.
+    """
+    config = get_config(config=ctx.obj)
+    jira = get_jira(config).result
+    user = get_user(jira, config).result
+    issues = get_issues_with_work_logged_on_date(jira, report_date)
+    if issues.result:
+        worklogs = get_user_worklogs_from_date(jira, user, issues).result
+        show_report(worklogs)
     else:
-        print("No work logged today!")
+        print("No work logged on given date")
 
 
 @cli.command(hidden=True)

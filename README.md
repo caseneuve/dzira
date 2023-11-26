@@ -31,8 +31,9 @@ Options:
   -h, --help          Show this message and exit.
 
 Commands:
-  log  Log time spent on ISSUE number or ISSUE with description...
-  ls   List issues from the current sprint.
+  log     Log time spent on ISSUE number or ISSUE with description...
+  ls      List issues from the current sprint.
+  report  Show work logged for today or for DATE.
 ```
 
 
@@ -132,4 +133,18 @@ Options:
   -w, --worklog INTEGER  Id of the worklog to be updated
   --spin / --no-spin
   -h, --help             Show this message and exit.
+```
+
+
+## `report` command
+
+```
+Usage: dzira report [OPTIONS]
+
+  Show work logged for today or for DATE.
+
+Options:
+  -d, --date [%Y-%m-%d|%Y-%m-%dT%H:%M:%S|%Y-%m-%d %H:%M:%S]
+                                  Date to show report for
+  -h, --help                      Show this message and exit.
 ```
