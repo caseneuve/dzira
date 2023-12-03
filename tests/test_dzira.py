@@ -1,6 +1,7 @@
 import datetime
 import os
 import sys
+import time
 from unittest.mock import Mock, PropertyMock, call, patch, sentinel
 from jira.exceptions import JIRAError
 
@@ -1183,6 +1184,8 @@ class TestSecondsToHourMinutFmt:
 
 class TestShowReport:
     def setup(self):
+        os.environ["TZ"] = "UTC"
+        time.tzset()
         self.user = Mock(accountId="123")
         self.worklog1 = Mock(
             raw={
@@ -1213,8 +1216,8 @@ class TestShowReport:
         show_report(D({"issue1": [self.worklog1], "issue2": [self.worklog2]}))
 
         assert mock_tabulate.call_args_list == [
-            call([["[1]", "13:42:16", ":   30m", "task a"]], maxcolwidths=[None, None, None, 60]),
-            call([["[2]", "15:42:00", ":1h 15m", "task b"]], maxcolwidths=[None, None, None, 60])
+            call([["[1]", "12:42:16", ":   30m", "task a"]], maxcolwidths=[None, None, None, 60]),
+            call([["[2]", "14:42:00", ":1h 15m", "task b"]], maxcolwidths=[None, None, None, 60])
         ]
         mock_print.assert_has_calls(
             [
