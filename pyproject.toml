@@ -36,15 +36,3 @@ dzira = "dzira.dzira:main"
 [project.urls]
 "Homepage" = "https://github.com/caseneuve/dzira"
 "Bug Tracker" = "https://github.com/caseneuve/dzira/issues"
-
-[tool.pyright]
-include = ["src", "tests"]
-exclude = ["**/__pycache__"]
-venvPath = "/home/piotr/.virtualenvs"
-venv = "dzira"
-
-reportMissingImports = true
-reportMissingTypeStubs = false
-
-pythonVersion = "3.11"
-pythonPlatform = "Linux"
