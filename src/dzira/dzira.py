@@ -686,7 +686,7 @@ def get_issues_with_work_logged_on_date(jira: JIRA, report_date: datetime | None
     if report_date is not None:
         query = f"worklogDate = {report_date:%Y-%m-%d}"
     else:
-        query = f"worklogDate > startOfDay()"
+        query = f"worklogDate >= startOfDay()"
         report_date = datetime.combine(date.today(), datetime.min.time())
     try:
         issues = jira.search_issues(query)

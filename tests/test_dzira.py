@@ -1056,7 +1056,7 @@ class TestGetIssuesWithWorkLoggedOnDate:
     def test_searching_issues_with_work_logged_after_today_has_begun(self):
         result = get_issues_with_work_logged_on_date(self.mock_jira, None)
 
-        self.mock_jira.search_issues.assert_called_once_with("worklogDate > startOfDay()")
+        self.mock_jira.search_issues.assert_called_once_with("worklogDate >= startOfDay()")
         assert type(result) == Result
         assert result.result == self.mock_jira.search_issues.return_value
         assert "Found 1 issue with work logged on" in result.stdout
