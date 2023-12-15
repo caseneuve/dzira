@@ -769,7 +769,7 @@ def show_report(worklogs: D) -> None:
 # TODO:
 # - [ ] sprint option
 # - [ ] save to csv, json format
-@cli.command
+@cli.command()
 @click.pass_context
 @click.option("-d", "--date", "report_date", help="Date to show report for", type=click.DateTime())
 @click.help_option("-h", "--help")
