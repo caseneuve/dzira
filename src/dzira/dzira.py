@@ -318,6 +318,7 @@ def update_worklog(
 @click.option("-s", "--server", help="JIRA_SERVER value", envvar="JIRA_SERVER")
 @click.option("--spin/--no-spin", help="Control the spinner", default=True)
 @click.help_option("-h", "--help")
+@click.version_option()
 @click.pass_context
 def cli(ctx, file, key, token, email, server, spin):
     """
