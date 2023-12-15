@@ -127,8 +127,8 @@ Options:
   -e, --end TEXT         Time when the work ended, e.g. '14:50', '16.10'
   -d, --date TEXT        Date when the work was done in ISO format, e.g.
                          2023-11-24, 2023-11-24 8:19, defaults to now; when
-                         --start option is provided and date matches %Y-%m-%d,
-                         start time will be used
+                         date matches %Y-%m-%d, time will be added from the
+                         --start option, if present, or current time will be used
   -c, --comment TEXT     Comment added to logged time
   -w, --worklog INTEGER  Id of the worklog to be updated
   --spin / --no-spin

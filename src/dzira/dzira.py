@@ -617,7 +617,8 @@ def perform_log_action(jira: JIRA, payload: D) -> None:
     help=(
         "Date when the work was done in ISO format, e.g. 2023-11-24, 2023-11-24 8:19, "
         "defaults to now; "
-        "when --start option is provided and date matches %Y-%m-%d, start time will be used"
+        "when date matches %Y-%m-%d, time will be added from the --start option, if present, "
+        "or current time will be used"
     ),
     type=click.UNPROCESSED,
     callback=validate_date,
