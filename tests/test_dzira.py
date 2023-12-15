@@ -760,16 +760,19 @@ class TestValidateHour:
         assert result is None
         mock_is_valid_hour.assert_not_called()
 
-    def test_passes_when_validator_passes_and_returns_unified_value(self, mock_is_valid_hour):
+    @pytest.mark.parametrize("given_time", ["17h23", "17,23", "17.23", "17:23"])
+    def test_passes_when_validator_passes_and_returns_unified_value(
+            self, mock_is_valid_hour, given_time
+    ):
         mock_ctx = Mock(params={"start": "16h42"})
         mock_param = Mock()
         type(mock_param).name = PropertyMock(return_value="end")
         mock_is_valid_hour.return_value = True
 
-        result = validate_hour(mock_ctx, mock_param, "17h23")
+        result = validate_hour(mock_ctx, mock_param, given_time)
 
         assert result == "17:23"
-        mock_is_valid_hour.assert_called_once_with("17h23")
+        mock_is_valid_hour.assert_called_once_with(given_time)
 
     def test_raises_otherwise(self, mock_is_valid_hour):
         mock_ctx = Mock(params={})

@@ -468,7 +468,6 @@ def validate_time(_, __, time):
 
 
 def validate_hour(ctx, param, value):
-    "TODO: update tests for happy path return value"
     if (
         param.name == "end"
         and value
