@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "dzira"
 version = "0.1"
 dependencies = [
-    "click",
+    "click >= 8.1",
     "jira",
     "python-dotenv",
     "tabulate",
