@@ -317,8 +317,8 @@ def update_worklog(
 @click.option("-m", "--email", help="JIRA_EMAIL value", envvar="JIRA_EMAIL")
 @click.option("-s", "--server", help="JIRA_SERVER value", envvar="JIRA_SERVER")
 @click.option("--spin/--no-spin", help="Control the spinner", default=True)
-@click.help_option("-h", "--help")
-@click.version_option()
+@click.help_option("-h", "--help", help="Show this message and exit")
+@click.version_option(help="Show the version and exit")
 @click.pass_context
 def cli(ctx, file, key, token, email, server, spin):
     """

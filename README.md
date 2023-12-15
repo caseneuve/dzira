@@ -28,8 +28,8 @@ Options:
   -m, --email TEXT    JIRA_EMAIL value
   -s, --server TEXT   JIRA_SERVER value
   --spin / --no-spin  Control the spinner
-  -h, --help          Show this message and exit.
-  --version           Show the version and exit.
+  -h, --help          Show this message and exit
+  --version           Show the version and exit
 
 Commands:
   log     Log time spent on ISSUE number or ISSUE with description...
