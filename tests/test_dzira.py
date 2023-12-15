@@ -808,6 +808,27 @@ class TestValidateDate:
         assert result == datetime.datetime(2023, 11, 23, 13, 42)
         mock_datetime.strptime.assert_called_once_with("2023-11-23 13:42", "%Y-%m-%d %H:%M")
 
+    def test_adds_current_time_when_only_date_provided_in_the_option(self, mocker):
+        mocker.patch("src.dzira.dzira.isinstance", Mock(return_value=True))
+        mock_datetime = mocker.patch("src.dzira.dzira.datetime")
+        mock_given_date = datetime.datetime(2023, 11, 23, 0, 0)
+        mock_datetime.strptime.return_value = mock_given_date
+        mock_now = datetime.datetime(2023, 11, 24, 18, 5, 43)
+        mock_datetime.now.return_value = mock_now
+        mock_delta = datetime.timedelta(seconds=3600)
+        mock_datetime.utcnow.return_value\
+            .astimezone.return_value\
+            .utcoffset.return_value = mock_delta
+        mock_combine = datetime.datetime(2023, 11, 23, 18, 5, 43)
+        mock_datetime.combine.return_value = mock_combine
+
+        result = validate_date(Mock(), Mock(), "2023-11-23")
+
+        assert result == mock_combine - mock_delta
+        mock_datetime.combine.assert_called_once_with(mock_datetime.date.return_value, mock_now.time())
+        mock_datetime.date.assert_called_once_with(mock_given_date)
+
+
     def test_validates_against_multiple_formats_and_raises_when_none_matches(self, mocker):
         mocker.patch("src.dzira.dzira.isinstance", Mock(return_value=False))
         mock_datetime = mocker.patch("src.dzira.dzira.datetime")
@@ -824,7 +845,7 @@ class TestValidateDate:
     def test_raises_when_date_in_future(self, mocker):
         mocker.patch("src.dzira.dzira.isinstance", Mock(return_value=True))
         mock_datetime = mocker.patch("src.dzira.dzira.datetime")
-        mock_datetime.strptime.return_value = datetime.datetime(2055, 11, 23, 13, 42)
+        mock_datetime.strptime.side_effect = [ValueError, datetime.datetime(2055, 11, 23, 13, 42)]
         mock_datetime.now.return_value = datetime.datetime(2023, 11, 24, 18, 0)
 
         with pytest.raises(click.BadParameter) as exc_info:
@@ -835,7 +856,7 @@ class TestValidateDate:
     def test_raises_when_date_older_than_2_weeks(self, mocker):
         mocker.patch("src.dzira.dzira.isinstance", Mock(return_value=True))
         mock_datetime = mocker.patch("src.dzira.dzira.datetime")
-        mock_datetime.strptime.return_value = datetime.datetime(1055, 11, 23, 13, 42)
+        mock_datetime.strptime.side_effect = [ValueError, datetime.datetime(1055, 11, 23, 13, 42)]
         mock_datetime.now.return_value = datetime.datetime(2023, 11, 24, 18, 0)
 
         with pytest.raises(click.BadParameter) as exc_info:
@@ -846,7 +867,7 @@ class TestValidateDate:
     def test_tries_to_convert_date_to_timezone_aware(self, mocker):
         mocker.patch("src.dzira.dzira.isinstance", Mock(return_value=True))
         mock_datetime = mocker.patch("src.dzira.dzira.datetime")
-        mock_datetime.strptime.return_value = datetime.datetime(2023, 11, 23, 13, 42)
+        mock_datetime.strptime.side_effect = [ValueError, datetime.datetime(2023, 11, 23, 13, 42)]
         mock_datetime.now.return_value = datetime.datetime(2023, 11, 24, 18, 0)
         mock_datetime.utcnow.return_value\
             .astimezone.return_value\

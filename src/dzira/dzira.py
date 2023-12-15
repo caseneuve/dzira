@@ -488,38 +488,36 @@ VALIDATE_DATE_FORMATS = ("%Y-%m-%d", "%Y-%m-%dT%H:%M", "%Y-%m-%d %H:%M")
 
 
 def validate_date(ctx, _, value):
-    """
-    TODO:
-    - guess timezone and change value to utc
-    """
     if value is None:
         return
 
     if re.match(r"^\d{4}-\d{2}-\d{2}$", value) and (start:=ctx.params.get("start")) is not None:
         value = f"{value} {start}"
 
-    date = None
+    given_date = None
     for fmt in VALIDATE_DATE_FORMATS:
         try:
-            date = datetime.strptime(value, fmt)
+            given_date = datetime.strptime(value, fmt)
+            if fmt == "%Y-%m-%d":
+                given_date = datetime.combine(datetime.date(given_date), datetime.now().time())
             break
         except ValueError:
             pass
 
-    if not isinstance(date, datetime):
+    if not isinstance(given_date, datetime):
         raise click.BadParameter(
             f"date has to match one of supported ISO formats: {', '.join(VALIDATE_DATE_FORMATS)}"
         )
     now = datetime.now()
-    if date > now:
+    if given_date > now:
         raise click.BadParameter("worklog date cannot be in future!")
-    if (now - date).days > 14:
+    if (now - given_date).days > 14:
         raise click.BadParameter("worklog date cannot be older than 2 weeks!")
 
     if (utc_offset:=datetime.utcnow().astimezone().utcoffset()):
-        return date - utc_offset
+        return given_date - utc_offset
     else:
-        return date
+        return given_date
 
 
 def sanitize_params(args: D) -> D:
