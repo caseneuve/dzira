@@ -27,7 +27,8 @@ Options:
   -t, --token TEXT    JIRA_TOKEN value
   -m, --email TEXT    JIRA_EMAIL value
   -s, --server TEXT   JIRA_SERVER value
-  --spin / --no-spin  Control the spinner
+  --spin / --no-spin    Control the spinner  [default: spin]
+  --color / --no-color  Control colors  [default: color]
   -h, --help          Show this message and exit
   --version           Show the version and exit
 

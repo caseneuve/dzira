@@ -9,6 +9,7 @@ import pytest
 import click
 from click.testing import CliRunner
 
+import src.dzira.dzira as dzira
 from src.dzira.dzira import (
     CONFIG_DIR_NAME,
     D,
@@ -95,6 +96,13 @@ class TestC:
     )
     def test_is_variadic(self, test_input, expected):
         assert c(*test_input) == expected
+
+    def test_returns_string_without_color_tags_when_use_color_is_false(self, mocker):
+        mocker.patch("src.dzira.dzira.use_color", False)
+
+        assert c("^bold", "this ", "^red", "text ", "^blue", "does not have colors", "^reset") == (
+            "this text does not have colors"
+        )
 
 
 class TestCursorHelpers:
@@ -597,6 +605,18 @@ class TestCli(CliTest):
 
         assert result.exit_code == 0
         assert "Configure JIRA connection" in result.output
+
+    def test_by_default_uses_colorful_output(self):
+        result = self.runner.invoke(dzira.cli, ["log", "-h"])
+
+        assert result.exit_code == 0
+        assert dzira.use_color
+
+    def test_supports_option_to_set_use_color(self):
+        result = self.runner.invoke(dzira.cli, ["--no-color", "log", "-h"])
+
+        assert result.exit_code == 0
+        assert dzira.use_color is False
 
 
 class TestLs(CliTest):
