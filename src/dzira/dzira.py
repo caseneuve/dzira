@@ -49,11 +49,11 @@ def c(*args):
 
 
 def hide_cursor():
-    print("\033[?25l", end="", flush=True)
+    print("\033[?25l", end="", flush=True, file=sys.stderr)
 
 
 def show_cursor():
-    print("\033[?25h", end="", flush=True)
+    print("\033[?25h", end="", flush=True, file=sys.stderr)
 
 
 class D(dict):

@@ -117,14 +117,14 @@ class TestCursorHelpers:
 
         hide_cursor()
 
-        mock_print.assert_called_once_with("\033[?25l", end="", flush=True)
+        mock_print.assert_called_once_with("\033[?25l", end="", flush=True, file=sys.stderr)
 
     def test_shows_cursor(self, mocker):
         mock_print = mocker.patch("src.dzira.dzira.print")
 
         show_cursor()
 
-        mock_print.assert_called_once_with("\033[?25h", end="", flush=True)
+        mock_print.assert_called_once_with("\033[?25h", end="", flush=True, file=sys.stderr)
 
 
 class TestResult:
