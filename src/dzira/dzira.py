@@ -838,13 +838,15 @@ def shell(ctx):
 
 def main():
     try:
-        hide_cursor()
+        if sys.stdin.isatty():
+            hide_cursor()
         cli()
     except Exception as e:
         print(e, file=sys.stderr)
         sys.exit(1)
     finally:
-        show_cursor()
+        if sys.stdin.isatty():
+            show_cursor()
 
 
 if __name__ == "__main__":

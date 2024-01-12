@@ -1493,8 +1493,9 @@ class TestMain:
         mock_print.assert_called_once_with(exc, file=sys.stderr)
         mock_exit.assert_called_once_with(1)
 
-    def test_hides_and_shows_the_cursor(self, mocker):
+    def test_hides_and_shows_the_cursor_when_in_interactive_shell(self, mocker):
         mocker.patch("src.dzira.dzira.cli")
+        mocker.patch("src.dzira.dzira.sys.stdin.isatty", Mock(return_value=True))
         mock_hide = mocker.patch("src.dzira.dzira.hide_cursor")
         mock_show = mocker.patch("src.dzira.dzira.show_cursor")
 
@@ -1502,3 +1503,14 @@ class TestMain:
 
         mock_hide.assert_called_once()
         mock_show.assert_called_once()
+
+    def test_does_not_hide_or_show_the_cursor_when_in_not_interactive_shell(self, mocker):
+        mocker.patch("src.dzira.dzira.cli")
+        mocker.patch("src.dzira.dzira.sys.stdin.isatty", Mock(return_value=False))
+        mock_hide = mocker.patch("src.dzira.dzira.hide_cursor")
+        mock_show = mocker.patch("src.dzira.dzira.show_cursor")
+
+        main()
+
+        assert not mock_hide.called
+        assert not mock_show.called
