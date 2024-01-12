@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import concurrent.futures
+import csv
+import json
 import os
 import re
 import subprocess
@@ -18,12 +20,15 @@ from dotenv import dotenv_values
 from jira import JIRA
 from jira.exceptions import JIRAError
 from jira.resources import Board, Sprint, User, Worklog
-from tabulate import tabulate
+from tabulate import tabulate, tabulate_formats
 
 
 CONFIG_DIR_NAME = "dzira"
 DOTFILE = f".{CONFIG_DIR_NAME}"
 REQUIRED_KEYS = "JIRA_SERVER", "JIRA_EMAIL", "JIRA_TOKEN", "JIRA_PROJECT_KEY"
+
+VALID_OUTPUT_FORMATS = sorted(tabulate_formats + ["json", "csv"])
+DEFAULT_OUTPUT_FORMAT = "simple_grid"
 
 use_spinner = True
 use_color = True
@@ -380,8 +385,11 @@ def get_sprint_and_issues(jira: JIRA, payload: D) -> list:
     return get_issues(jira, sprint).result
 
 
-def show_issues(issues: list) -> None:
-    fmt = lambda t: timedelta(seconds=t) if t else None
+def show_issues(issues: list, format: str) -> None:
+    if format in ("json", "csv"):
+        global use_color; use_color = False
+
+    fmt = lambda t: str(timedelta(seconds=t)) if t else None
     state_clr = {"To Do": "^magenta", "In Progress": "^yellow", "Done": "^green"}
     clr = lambda s: c(state_clr.get(s, "^reset"), "^bold", s)
 
@@ -393,6 +401,7 @@ def show_issues(issues: list) -> None:
         except Exception:
             return fmt(i.fields.timeestimate)
 
+    headers = ("#", "summary", "state", "spent", "estimated")
     issues = [
         (
             c("^blue", i.key),
@@ -403,15 +412,29 @@ def show_issues(issues: list) -> None:
         )
         for i in reversed(sorted(issues, key=lambda i: i.fields.status.name))
     ]
-    print(
-        tabulate(
-            issues,
-            headers=("#", "summary", "state", "spent", "estimated"),
-            colalign=("right", "left", "left", "right", "right"),
-            maxcolwidths=[None, 35, None, None, None],
-            tablefmt="grid",
+
+    if format == "json":
+        print(json.dumps([dict(zip(headers, issue)) for issue in issues]))
+    elif format == "csv":
+        writer = csv.DictWriter(sys.stdout, fieldnames=headers)
+        writer.writeheader()
+        writer.writerows([dict(zip(headers, issue)) for issue in issues])
+    else:
+        print(
+            tabulate(
+                issues,
+                headers=headers,
+                colalign=("right", "left", "left", "right", "right"),
+                maxcolwidths=[None, 35, None, None, None],
+                tablefmt=format,
+            )
         )
-    )
+
+
+def validate_output_format(_, __, value):
+    if value.lower() in VALID_OUTPUT_FORMATS:
+        return value.lower()
+    raise click.BadParameter(f"format should be one of: {', '.join(VALID_OUTPUT_FORMATS)}")
 
 
 @cli.command()
@@ -429,18 +452,27 @@ def show_issues(issues: list) -> None:
         "has precedence over --state"
     )
 )
+@click.option(
+    "-f", "--format",
+    default=DEFAULT_OUTPUT_FORMAT,
+    show_default=True,
+    help="Output format: supports tabulate formats + CSV and JSON",
+    callback=validate_output_format,
+)
 @click.help_option("-h", "--help")
-def ls(ctx, state, sprint_id):
+def ls(ctx, state, sprint_id, format):
     """
     List issues from the current sprint.
 
     'Current sprint' is understood as the first 'active' sprint found.
     To avoid ambiguity, use --sprint-id option.
+
+    Format can be one of supported tabulate formats or CSV, JSON.
     """
     config = get_config(config=ctx.obj)
     jira = get_jira(config).result
     issues = get_sprint_and_issues(jira, D(state=state, sprint_id=sprint_id, **config))
-    show_issues(issues)
+    show_issues(issues, format=format)
 
 
 ##################################################

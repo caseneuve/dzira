@@ -86,12 +86,16 @@ Usage: dzira ls [OPTIONS]
   'Current sprint' is understood as the first 'active' sprint found. To avoid
   ambiguity, use --sprint-id option.
 
+  Format can be one of supported tabulate formats or CSV, JSON.
+
 Options:
   -s, --state [active|closed]  Sprint state used for filtering  [default:
                                active]
   -i, --sprint-id INTEGER      Sprint id to get unambiguous result, helpful
                                when multiple active sprints; has precedence
                                over --state
+  -f, --format TEXT            Output format: supports tabulate formats + CSV
+                               and JSON  [default: simple_grid]
   -h, --help                   Show this message and exit.
 ```
 

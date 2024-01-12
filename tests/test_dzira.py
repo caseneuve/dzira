@@ -2,19 +2,23 @@ import datetime
 import os
 import sys
 import time
+from collections import namedtuple
 from unittest.mock import Mock, PropertyMock, call, patch, sentinel
-from jira.exceptions import JIRAError
 
-import pytest
 import click
+import pytest
+import tabulate
 from click.testing import CliRunner
+from jira.exceptions import JIRAError
 
 import src.dzira.dzira as dzira
 from src.dzira.dzira import (
     CONFIG_DIR_NAME,
     D,
+    DEFAULT_OUTPUT_FORMAT,
     DOTFILE,
     VALIDATE_DATE_FORMATS,
+    VALID_OUTPUT_FORMATS,
     Result,
     _get_sprints,
     _seconds_to_hour_minute_fmt,
@@ -47,10 +51,12 @@ from src.dzira.dzira import (
     report,
     sanitize_params,
     show_cursor,
+    show_issues,
     show_report,
     update_worklog,
     validate_date,
     validate_hour,
+    validate_output_format,
     validate_time,
 )
 
@@ -595,6 +601,110 @@ class TestGetSprintAndIssues:
         assert result == mock_get_issues.return_value.result
 
 
+@pytest.fixture
+def mock_print(mocker):
+    return mocker.patch("src.dzira.dzira.print")
+
+
+@pytest.fixture
+def mock_tabulate(mocker):
+    return mocker.patch("src.dzira.dzira.tabulate")
+
+
+@pytest.fixture
+def mock_json(mocker):
+    return mocker.patch("src.dzira.dzira.json")
+
+
+@pytest.fixture
+def mock_csv(mocker):
+    return mocker.patch("src.dzira.dzira.csv")
+
+
+class TestShowIssues:
+    def setup(self):
+        status = namedtuple("status", ["name"])
+        issue1 = Mock(
+            key="XYZ-1",
+            fields=Mock(
+                summary="description 1",
+                status=status("In Progress"),
+                timespent=3600*4,
+                timetracking=Mock(
+                    remainingEstimate="1d",
+                    originalEstimate="2d"
+                )
+            )
+        )
+        issue2 = Mock(
+            key="XYZ-2",
+            fields=Mock(
+                summary="description 2",
+                status=status(name="To Do"),
+                timespent=3600*2,
+                timetracking=Mock(
+                    remainingEstimate="3d",
+                    originalEstimate="3d"
+                )
+            )
+        )
+        self.issues = [issue1, issue2]
+        self.headers = ("#", "summary", "state", "spent", "estimated")
+        self.processed_issues = [
+            (
+                "XYZ-2", "description 2", "To Do",
+                str(datetime.timedelta(seconds=3600*2)), "3d"
+            ),
+            (
+                "XYZ-1", "description 1", "In Progress",
+                str(datetime.timedelta(seconds=3600*4)), "1d (2d)"
+            )
+        ]
+        dzira.use_color = False
+
+    def test_shows_data_extracted_from_jira_issues(self, mock_print, mock_tabulate):
+        show_issues(self.issues, format=sentinel.fmt)
+
+        mock_tabulate.assert_called_once_with(
+            self.processed_issues,
+            headers=self.headers,
+            colalign=("right", "left", "left", "right", "right"),
+            maxcolwidths=[None, 35, None, None, None],
+            tablefmt=sentinel.fmt
+        )
+        mock_print.assert_called_once_with(mock_tabulate.return_value)
+
+    @pytest.mark.parametrize("fmt", tabulate.tabulate_formats)
+    def test_uses_tabulate_if_format_other_than_csv_or_json(
+            self, fmt, mock_tabulate, mock_json, mock_csv
+    ):
+        show_issues(self.issues, format=fmt)
+
+        mock_tabulate.assert_called()
+        assert not mock_json.dumps.called
+        assert not mock_csv.DictWriter.called
+
+    def test_prints_json(self, mock_tabulate, mock_json, mock_csv):
+        show_issues(self.issues, format="json")
+
+        mock_json.dumps.assert_called_once_with(
+            [dict(zip(self.headers, i)) for i in self.processed_issues]
+        )
+        assert not mock_tabulate.called
+        assert not mock_csv.DictWriter.called
+
+    def test_prints_csv(self, mock_tabulate, mock_json, mock_csv):
+        show_issues(self.issues, format="csv")
+
+        mock_csv.DictWriter.assert_called_once_with(sys.stdout, fieldnames=self.headers)
+        mock_csv.DictWriter.return_value.writeheader.assert_called_once()
+        mock_csv.DictWriter.return_value.writerows.assert_called_once_with(
+            [dict(zip(self.headers, i)) for i in self.processed_issues]
+        )
+        assert not mock_tabulate.called
+        assert not mock_json.dumps.called
+
+
 class CliTest:
     runner = CliRunner()
 
@@ -619,6 +729,20 @@ class TestCli(CliTest):
         assert dzira.use_color is False
 
 
+class TestValidateOutputFormat:
+    @pytest.mark.parametrize(
+        "fmt", VALID_OUTPUT_FORMATS + list(map(str.upper, VALID_OUTPUT_FORMATS))
+    )
+    def test_returns_lowered_format_if_valid(self, fmt):
+        validate_output_format(Mock(), Mock(), fmt)
+
+    def test_raises_when_format_invalid(self):
+        with pytest.raises(click.BadParameter) as exc_info:
+            validate_output_format(Mock(), Mock(), "invalid")
+
+        assert f"format should be one of" in str(exc_info)
+
+
 class TestLs(CliTest):
     def test_help(self):
         result = self.runner.invoke(ls, ["--help"])
@@ -638,7 +762,7 @@ class TestLs(CliTest):
         result = self.runner.invoke(cli, ["--token", "foo", "ls"])
 
         assert result.exit_code == 0
-        mock_show_issues.assert_called_once_with(sentinel.issues)
+        mock_show_issues.assert_called_once_with(sentinel.issues, format=DEFAULT_OUTPUT_FORMAT)
         mock_get_sprint_and_issues.assert_called_once_with(
             sentinel.jira, D(state="active", sprint_id=None, **mock_config)
         )
@@ -669,7 +793,7 @@ class TestLs(CliTest):
         result = self.runner.invoke(cli, ["ls", "--state", "closed"])
 
         assert result.exit_code == 0
-        mock_show_issues.assert_called_once_with(sentinel.issues)
+        mock_show_issues.assert_called_once_with(sentinel.issues, format=DEFAULT_OUTPUT_FORMAT)
         mock_get_sprint_and_issues.assert_called_once_with(
             sentinel.jira, D(state="closed", sprint_id=None, **mock_get_config.return_value)
         )
@@ -686,10 +810,21 @@ class TestLs(CliTest):
         result = self.runner.invoke(cli, ["ls", "--sprint-id", "42"])
 
         assert result.exit_code == 0
-        mock_show_issues.assert_called_once_with(sentinel.issues)
+        mock_show_issues.assert_called_once_with(sentinel.issues, format=DEFAULT_OUTPUT_FORMAT)
         mock_get_sprint_and_issues.assert_called_once_with(
             sentinel.jira, D(state="active", sprint_id=42, **mock_get_config.return_value)
         )
+
+    def test_supports_tabulate_formats_option(self, mocker):
+        mocker.patch("src.dzira.dzira.get_config")
+        mocker.patch("src.dzira.dzira.get_jira")
+        mock_issues = mocker.patch("src.dzira.dzira.get_sprint_and_issues")
+        mock_show_issues = mocker.patch("src.dzira.dzira.show_issues")
+
+        result = self.runner.invoke(cli, ["ls", "--format", "orgtbl"])
+
+        assert result.exit_code == 0
+        mock_show_issues.assert_called_once_with(mock_issues.return_value, format="orgtbl")
 
 
 class TestCorrectTimeFormats:
