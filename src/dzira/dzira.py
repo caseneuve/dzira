@@ -26,6 +26,7 @@ DOTFILE = f".{CONFIG_DIR_NAME}"
 REQUIRED_KEYS = "JIRA_SERVER", "JIRA_EMAIL", "JIRA_TOKEN", "JIRA_PROJECT_KEY"
 
 use_spinner = True
+use_color = True
 
 
 def c(*args):
@@ -37,7 +38,9 @@ def c(*args):
                                       ("^blue", 94),
                                       ("^magenta", 95),
                                       ("^cyan", 96))}
-    return "".join([C.get(a, a) for a in args]) + C["^reset"]
+    if use_color:
+        return "".join([C.get(a, a) for a in args]) + C["^reset"]
+    return "".join([a for a in args if a not in C])
 
 
 def hide_cursor():
@@ -316,11 +319,12 @@ def update_worklog(
 @click.option("-t", "--token", help="JIRA_TOKEN value", envvar="JIRA_TOKEN")
 @click.option("-m", "--email", help="JIRA_EMAIL value", envvar="JIRA_EMAIL")
 @click.option("-s", "--server", help="JIRA_SERVER value", envvar="JIRA_SERVER")
-@click.option("--spin/--no-spin", help="Control the spinner", default=True)
+@click.option("--spin/--no-spin", help="Control the spinner", default=True, show_default=True)
+@click.option("--color/--no-color", help="Control colors", default=True, show_default=True)
 @click.help_option("-h", "--help", help="Show this message and exit")
 @click.version_option(help="Show the version and exit")
 @click.pass_context
-def cli(ctx, file, key, token, email, server, spin):
+def cli(ctx, file, key, token, email, server, spin, color):
     """
     Configure JIRA connection by using default config files, environment
     variables, or options below. The discovery of default config files uses
@@ -341,6 +345,7 @@ def cli(ctx, file, key, token, email, server, spin):
     - JIRA_PROJECT_KEY (your team's project key)
     """
     global use_spinner; use_spinner = spin
+    global use_color; use_color = color
 
     ctx.ensure_object(dict)
     cfg = {
