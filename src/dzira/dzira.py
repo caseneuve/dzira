@@ -111,11 +111,7 @@ def spin_it(msg="", done="✓", fail="✗"):
         @wraps(func)
         def wrapper(*args, **kwargs):
             if not use_spinner:
-                result = func(*args, **kwargs)
-                if out := result.stdout:
-                    print(c("^green", done, separator, "^reset", out), flush=True)
-                return result
-
+                return func(*args, **kwargs)
             try:
                 with concurrent.futures.ThreadPoolExecutor() as executor:
                     future = executor.submit(func, *args, **kwargs)
@@ -665,7 +661,6 @@ def perform_log_action(jira: JIRA, payload: D) -> None:
 @click.option(
     "-w", "--worklog", "worklog_id", type=int, help="Id of the worklog to be updated"
 )
-@click.option("--spin/--no-spin", default=True)
 @click.help_option("-h", "--help")
 def log(ctx, **_):
     """Log time spent on ISSUE number or ISSUE with description containing
