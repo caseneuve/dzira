@@ -119,14 +119,17 @@ def spin_it(msg="", done="✓", fail="✗"):
                     while future.running():
                         print(
                             c("\r", "^magenta", next(spinner), separator, msg),
-                            end="", flush=True,
+                            end="",
+                            flush=True,
+                            file=sys.stderr
                         )
                         time.sleep(0.1)
 
                     r: Result = future.result()
                     print(
                         c("\r", "^green", done, separator, msg, "^reset", connector, r.stdout),
-                        flush=True
+                        flush=True,
+                        file=sys.stderr
                     )
                     return r
             except Exception as exc:
@@ -136,7 +139,9 @@ def spin_it(msg="", done="✓", fail="✗"):
                     error_msg = exc
                 print(
                     c("\r", "^red", fail, separator, msg),
-                    end=":\n", flush=True,
+                    end=":\n",
+                    flush=True,
+                    file=sys.stderr
                 )
                 raise Exception(error_msg)
         return wrapper
