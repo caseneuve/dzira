@@ -73,6 +73,41 @@ def config(mocker):
     return mock_dotenv_values
 
 
+@pytest.fixture
+def mock_print(mocker):
+    return mocker.patch("src.dzira.dzira.print")
+
+
+@pytest.fixture
+def mock_tabulate(mocker):
+    return mocker.patch("src.dzira.dzira.tabulate")
+
+
+@pytest.fixture
+def mock_json(mocker):
+    return mocker.patch("src.dzira.dzira.json")
+
+
+@pytest.fixture
+def mock_csv(mocker):
+    return mocker.patch("src.dzira.dzira.csv")
+
+
+@pytest.fixture
+def mock_isatty(mocker):
+    return mocker.patch("src.dzira.dzira.sys.stdin.isatty", Mock(return_value=True))
+
+
+@pytest.fixture
+def mock_set_color_use(mocker):
+    return mocker.patch("src.dzira.dzira.set_color_use")
+
+
+@pytest.fixture
+def mock_set_spinner_use(mocker):
+    return mocker.patch("src.dzira.dzira.set_spinner_use")
+
+
 class TestC:
     @pytest.mark.parametrize(
         "test_input,expected",
@@ -601,26 +636,6 @@ class TestGetSprintAndIssues:
         assert result == mock_get_issues.return_value.result
 
 
-@pytest.fixture
-def mock_print(mocker):
-    return mocker.patch("src.dzira.dzira.print")
-
-
-@pytest.fixture
-def mock_tabulate(mocker):
-    return mocker.patch("src.dzira.dzira.tabulate")
-
-
-@pytest.fixture
-def mock_json(mocker):
-    return mocker.patch("src.dzira.dzira.json")
-
-
-@pytest.fixture
-def mock_csv(mocker):
-    return mocker.patch("src.dzira.dzira.csv")
-
-
 class TestShowIssues:
     def setup(self):
         status = namedtuple("status", ["name"])
@@ -705,6 +720,34 @@ class TestShowIssues:
         assert not mock_json.dumps.called
 
 
+class TestSetColorUse:
+    @pytest.mark.parametrize(
+        "input,isatty,expected",
+        [(True, True, True), (False, True, False), (True, False, False)]
+    )
+    def test_sets_color_option_using_user_input_and_interactivity_state(self, input, isatty, expected):
+        dzira.sys.stdin.isatty = lambda: isatty
+
+        dzira.set_color_use(input)
+
+        assert dzira.use_color is expected
+
+
+class TestSetSpinnerUse:
+    @pytest.mark.parametrize(
+        "input,isatty,expected",
+        [(True, True, True), (False, True, False), (True, False, False)]
+    )
+    def test_sets_spinner_option_using_user_input_and_interactivity_state(
+            self, input, isatty, expected
+    ):
+        dzira.sys.stdin.isatty = lambda: isatty
+
+        dzira.set_spinner_use(input)
+
+        assert dzira.use_spinner is expected
+
+
 class CliTest:
     runner = CliRunner()
 
@@ -716,17 +759,29 @@ class TestCli(CliTest):
         assert result.exit_code == 0
         assert "Configure JIRA connection" in result.output
 
-    def test_by_default_uses_colorful_output(self):
-        result = self.runner.invoke(dzira.cli, ["log", "-h"])
+    def test_by_default_uses_colorful_output(self, mock_set_color_use):
+        result = self.runner.invoke(cli, ["log", "-h"])
 
         assert result.exit_code == 0
-        assert dzira.use_color
+        mock_set_color_use.assert_called_once_with(True)
 
-    def test_supports_option_to_set_use_color(self):
-        result = self.runner.invoke(dzira.cli, ["--no-color", "log", "-h"])
+    def test_supports_option_to_set_use_color(self, mock_set_color_use):
+        result = self.runner.invoke(cli, ["--no-color", "log", "-h"])
 
         assert result.exit_code == 0
-        assert dzira.use_color is False
+        mock_set_color_use.assert_called_once_with(False)
+
+    def test_by_default_uses_spinner(self, mock_set_spinner_use):
+        result = self.runner.invoke(cli, ["log", "-h"])
+
+        assert result.exit_code == 0
+        mock_set_spinner_use.assert_called_once_with(True)
+
+    def test_supports_option_to_set_spinner(self, mock_set_spinner_use):
+        result = self.runner.invoke(cli, ["--no-spin", "log", "-h"])
+
+        assert result.exit_code == 0
+        mock_set_spinner_use.assert_called_once_with(False)
 
 
 class TestValidateOutputFormat:
@@ -1493,9 +1548,8 @@ class TestMain:
         mock_print.assert_called_once_with(exc, file=sys.stderr)
         mock_exit.assert_called_once_with(1)
 
-    def test_hides_and_shows_the_cursor_when_in_interactive_shell(self, mocker):
+    def test_hides_and_shows_the_cursor_when_in_interactive_shell(self, mocker, mock_isatty):
         mocker.patch("src.dzira.dzira.cli")
-        mocker.patch("src.dzira.dzira.sys.stdin.isatty", Mock(return_value=True))
         mock_hide = mocker.patch("src.dzira.dzira.hide_cursor")
         mock_show = mocker.patch("src.dzira.dzira.show_cursor")
 
@@ -1504,9 +1558,11 @@ class TestMain:
         mock_hide.assert_called_once()
         mock_show.assert_called_once()
 
-    def test_does_not_hide_or_show_the_cursor_when_in_not_interactive_shell(self, mocker):
+    def test_does_not_hide_or_show_the_cursor_when_in_not_interactive_shell(
+            self, mocker, mock_isatty
+    ):
         mocker.patch("src.dzira.dzira.cli")
-        mocker.patch("src.dzira.dzira.sys.stdin.isatty", Mock(return_value=False))
+        mock_isatty.return_value = False
         mock_hide = mocker.patch("src.dzira.dzira.hide_cursor")
         mock_show = mocker.patch("src.dzira.dzira.show_cursor")
 

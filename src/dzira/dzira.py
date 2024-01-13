@@ -314,6 +314,16 @@ def update_worklog(
     return Result(stdout=f"{worklog.id} updated!")
 
 
+def set_spinner_use(with_spinner: bool):
+    global use_spinner;
+    use_spinner = with_spinner and sys.stdin.isatty()
+
+
+def set_color_use(with_color: bool):
+    global use_color
+    use_color = with_color and sys.stdin.isatty()
+
+
 ##################################################
 #  CLI wrapper
 ##################################################
@@ -350,8 +360,8 @@ def cli(ctx, file, key, token, email, server, spin, color):
     - JIRA_TOKEN (your Jira token),
     - JIRA_PROJECT_KEY (your team's project key)
     """
-    global use_spinner; use_spinner = spin
-    global use_color; use_color = color
+    set_spinner_use(spin)
+    set_color_use(color)
 
     ctx.ensure_object(dict)
     cfg = {
