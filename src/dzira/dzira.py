@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import concurrent.futures
+import csv
+import json
 import os
 import re
 import subprocess
@@ -18,12 +20,15 @@ from dotenv import dotenv_values
 from jira import JIRA
 from jira.exceptions import JIRAError
 from jira.resources import Board, Sprint, User, Worklog
-from tabulate import tabulate
+from tabulate import tabulate, tabulate_formats
 
 
 CONFIG_DIR_NAME = "dzira"
 DOTFILE = f".{CONFIG_DIR_NAME}"
 REQUIRED_KEYS = "JIRA_SERVER", "JIRA_EMAIL", "JIRA_TOKEN", "JIRA_PROJECT_KEY"
+
+VALID_OUTPUT_FORMATS = sorted(tabulate_formats + ["json", "csv"])
+DEFAULT_OUTPUT_FORMAT = "simple_grid"
 
 use_spinner = True
 use_color = True
@@ -44,11 +49,11 @@ def c(*args):
 
 
 def hide_cursor():
-    print("\033[?25l", end="", flush=True)
+    print("\033[?25l", end="", flush=True, file=sys.stderr)
 
 
 def show_cursor():
-    print("\033[?25h", end="", flush=True)
+    print("\033[?25h", end="", flush=True, file=sys.stderr)
 
 
 class D(dict):
@@ -106,11 +111,7 @@ def spin_it(msg="", done="✓", fail="✗"):
         @wraps(func)
         def wrapper(*args, **kwargs):
             if not use_spinner:
-                result = func(*args, **kwargs)
-                if out := result.stdout:
-                    print(c("^green", done, separator, "^reset", out), flush=True)
-                return result
-
+                return func(*args, **kwargs)
             try:
                 with concurrent.futures.ThreadPoolExecutor() as executor:
                     future = executor.submit(func, *args, **kwargs)
@@ -118,14 +119,17 @@ def spin_it(msg="", done="✓", fail="✗"):
                     while future.running():
                         print(
                             c("\r", "^magenta", next(spinner), separator, msg),
-                            end="", flush=True,
+                            end="",
+                            flush=True,
+                            file=sys.stderr
                         )
                         time.sleep(0.1)
 
                     r: Result = future.result()
                     print(
                         c("\r", "^green", done, separator, msg, "^reset", connector, r.stdout),
-                        flush=True
+                        flush=True,
+                        file=sys.stderr
                     )
                     return r
             except Exception as exc:
@@ -135,7 +139,9 @@ def spin_it(msg="", done="✓", fail="✗"):
                     error_msg = exc
                 print(
                     c("\r", "^red", fail, separator, msg),
-                    end=":\n", flush=True,
+                    end=":\n",
+                    flush=True,
+                    file=sys.stderr
                 )
                 raise Exception(error_msg)
         return wrapper
@@ -308,6 +314,16 @@ def update_worklog(
     return Result(stdout=f"{worklog.id} updated!")
 
 
+def set_spinner_use(with_spinner: bool):
+    global use_spinner;
+    use_spinner = with_spinner and sys.stdin.isatty()
+
+
+def set_color_use(with_color: bool):
+    global use_color
+    use_color = with_color and sys.stdin.isatty()
+
+
 ##################################################
 #  CLI wrapper
 ##################################################
@@ -344,8 +360,8 @@ def cli(ctx, file, key, token, email, server, spin, color):
     - JIRA_TOKEN (your Jira token),
     - JIRA_PROJECT_KEY (your team's project key)
     """
-    global use_spinner; use_spinner = spin
-    global use_color; use_color = color
+    set_spinner_use(spin)
+    set_color_use(color)
 
     ctx.ensure_object(dict)
     cfg = {
@@ -380,8 +396,11 @@ def get_sprint_and_issues(jira: JIRA, payload: D) -> list:
     return get_issues(jira, sprint).result
 
 
-def show_issues(issues: list) -> None:
-    fmt = lambda t: timedelta(seconds=t) if t else None
+def show_issues(issues: list, format: str) -> None:
+    if format in ("json", "csv"):
+        global use_color; use_color = False
+
+    fmt = lambda t: str(timedelta(seconds=t)) if t else None
     state_clr = {"To Do": "^magenta", "In Progress": "^yellow", "Done": "^green"}
     clr = lambda s: c(state_clr.get(s, "^reset"), "^bold", s)
 
@@ -393,6 +412,7 @@ def show_issues(issues: list) -> None:
         except Exception:
             return fmt(i.fields.timeestimate)
 
+    headers = ("#", "summary", "state", "spent", "estimated")
     issues = [
         (
             c("^blue", i.key),
@@ -403,15 +423,29 @@ def show_issues(issues: list) -> None:
         )
         for i in reversed(sorted(issues, key=lambda i: i.fields.status.name))
     ]
-    print(
-        tabulate(
-            issues,
-            headers=("#", "summary", "state", "spent", "estimated"),
-            colalign=("right", "left", "left", "right", "right"),
-            maxcolwidths=[None, 35, None, None, None],
-            tablefmt="grid",
+
+    if format == "json":
+        print(json.dumps([dict(zip(headers, issue)) for issue in issues]))
+    elif format == "csv":
+        writer = csv.DictWriter(sys.stdout, fieldnames=headers)
+        writer.writeheader()
+        writer.writerows([dict(zip(headers, issue)) for issue in issues])
+    else:
+        print(
+            tabulate(
+                issues,
+                headers=headers,
+                colalign=("right", "left", "left", "right", "right"),
+                maxcolwidths=[None, 35, None, None, None],
+                tablefmt=format,
+            )
         )
-    )
+
+
+def validate_output_format(_, __, value):
+    if value.lower() in VALID_OUTPUT_FORMATS:
+        return value.lower()
+    raise click.BadParameter(f"format should be one of: {', '.join(VALID_OUTPUT_FORMATS)}")
 
 
 @cli.command()
@@ -429,18 +463,27 @@ def show_issues(issues: list) -> None:
         "has precedence over --state"
     )
 )
+@click.option(
+    "-f", "--format",
+    default=DEFAULT_OUTPUT_FORMAT,
+    show_default=True,
+    help="Output format: supports tabulate formats + CSV and JSON",
+    callback=validate_output_format,
+)
 @click.help_option("-h", "--help")
-def ls(ctx, state, sprint_id):
+def ls(ctx, state, sprint_id, format):
     """
     List issues from the current sprint.
 
     'Current sprint' is understood as the first 'active' sprint found.
     To avoid ambiguity, use --sprint-id option.
+
+    Format can be one of supported tabulate formats or CSV, JSON.
     """
     config = get_config(config=ctx.obj)
     jira = get_jira(config).result
     issues = get_sprint_and_issues(jira, D(state=state, sprint_id=sprint_id, **config))
-    show_issues(issues)
+    show_issues(issues, format=format)
 
 
 ##################################################
@@ -633,7 +676,6 @@ def perform_log_action(jira: JIRA, payload: D) -> None:
 @click.option(
     "-w", "--worklog", "worklog_id", type=int, help="Id of the worklog to be updated"
 )
-@click.option("--spin/--no-spin", default=True)
 @click.help_option("-h", "--help")
 def log(ctx, **_):
     """Log time spent on ISSUE number or ISSUE with description containing
@@ -728,8 +770,7 @@ def get_user_worklogs_from_date(jira: JIRA, user: User, issues: Result) -> Resul
             if matching:
                 key = issue.raw["key"]
                 summary = issue.raw["fields"]["summary"]
-                # worklogs[f"[{key}] {summary}"] = matching
-                worklogs.update(f"[{key}] {summary}", matching, counter=lambda x: x + (len(matching)))
+                worklogs.update((key, summary), matching, counter=lambda x: x + (len(matching)))
         except Exception as exc:
             raise Exception(str(exc))
 
@@ -748,40 +789,85 @@ def _seconds_to_hour_minute_fmt(seconds):
     return f"{hours}h {minutes:02}m"
 
 
-def show_report(worklogs: D) -> None:
+def show_report(worklogs: D, format: str | None) -> None:
     total_time = 0
+    csv_rows = []
+    json_dict = {}
+    tables = []
     for issue in worklogs:
-        this_total_time = 0
-        rows = []
+        key, summary = issue
+        issue_total_time = 0
+        issue_worklogs = []
         for w in worklogs[issue]:
             started, time_spent, comment, time_spent_seconds = D(w.raw)(
                 "started", "timeSpent", "comment", "timeSpentSeconds"
             )
             total_time += time_spent_seconds
-            this_total_time += time_spent_seconds
+            issue_total_time += time_spent_seconds
             local_timestamp = datetime.strptime(started, '%Y-%m-%dT%H:%M:%S.%f%z').astimezone()
             formatted_time = local_timestamp.strftime('%H:%M:%S')
-            row = [f"[{w.id}]", formatted_time, f":{time_spent:>6}", comment or ""]
-            rows.append(row)
 
-        print()
-        print(c("^bold", issue), f"({_seconds_to_hour_minute_fmt(this_total_time)})")
-        print(tabulate(rows, maxcolwidths=[None, None, None, 60]))
+            if format == "csv":
+                processed_worklog = [
+                    key, summary, w.id, formatted_time, time_spent, time_spent_seconds, comment
+                ]
+                csv_rows.append(processed_worklog)
+            elif format == "json":
+                processed_worklog = {
+                    "id": w.id,
+                    "started": local_timestamp.strftime("%H:%M:%S"),
+                    "spent": time_spent,
+                    "spent_seconds": time_spent_seconds,
+                    "comment": comment
+                }
+            else:
+                processed_worklog = [f"[{w.id}]", formatted_time, f":{time_spent:>6}", comment or ""]
+            issue_worklogs.append(processed_worklog)
 
-    if worklogs:
+        if format == "simple":
+            header = c(
+                "^bold", f"[{key}] {summary} ",
+                "^cyan", f"({_seconds_to_hour_minute_fmt(issue_total_time)})"
+            )
+            tables.append((header, issue_worklogs))
+        elif format == "json":
+            json_dict[key] = {
+                "summary": summary,
+                "issue_total_time": _seconds_to_hour_minute_fmt(issue_total_time),
+                "issue_total_spent_seconds": issue_total_time,
+                "worklogs": issue_worklogs
+            }
+
+    if format == "csv":
+        headers = ["issue", "summary", "worklog", "started", "spent", "spent_seconds", "comment"]
+        writer = csv.DictWriter(sys.stdout, fieldnames=headers)
+        writer.writeheader()
+        writer.writerows([dict(zip(headers, row)) for row in csv_rows])
+    elif format == "json":
+        json_dict["total_time"] = _seconds_to_hour_minute_fmt(total_time)
+        json_dict["total_seconds"] = total_time
+        print(json.dumps(json_dict))
+    else:
+        for header, rows in tables:
+            print()
+            print(header)
+            print(tabulate(rows, maxcolwidths=[None, None, None, 60]))
         print(f"\n{c('^bold', 'Total spent time')}: {_seconds_to_hour_minute_fmt(total_time)}\n")
 
 
-# TODO:
-# - [ ] sprint option
-# - [ ] save to csv, json format
+# TODO: add sprint option
 @cli.command()
 @click.pass_context
 @click.option("-d", "--date", "report_date", help="Date to show report for", type=click.DateTime())
-@click.help_option("-h", "--help")
-def report(ctx, report_date):
+@click.option(
+    "-f", "--format",
+    type=click.Choice(["simple", "csv", "json"]), default="simple", show_default=True,
+    help="How to display the report",
+)
+@click.help_option("-h", "--help", help="Show this message and exit")
+def report(ctx, report_date, format):
     """
-    Show work logged for today or for DATE.
+    Show work logged for today or for DATE using given FORMAT.
     """
     config = get_config(config=ctx.obj)
     jira = get_jira(config).result
@@ -789,7 +875,7 @@ def report(ctx, report_date):
     issues = get_issues_with_work_logged_on_date(jira, report_date)
     if issues.result:
         worklogs = get_user_worklogs_from_date(jira, user, issues).result
-        show_report(worklogs)
+        show_report(worklogs, format=format)
     else:
         print("No work logged on given date")
 
@@ -806,13 +892,15 @@ def shell(ctx):
 
 def main():
     try:
-        hide_cursor()
+        if sys.stdin.isatty():
+            hide_cursor()
         cli()
     except Exception as e:
         print(e, file=sys.stderr)
         sys.exit(1)
     finally:
-        show_cursor()
+        if sys.stdin.isatty():
+            show_cursor()
 
 
 if __name__ == "__main__":

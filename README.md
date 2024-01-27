@@ -35,7 +35,7 @@ Options:
 Commands:
   log     Log time spent on ISSUE number or ISSUE with description...
   ls      List issues from the current sprint.
-  report  Show work logged for today or for DATE.
+  report  Show work logged for today or for DATE using given FORMAT.
 ```
 
 
@@ -86,12 +86,16 @@ Usage: dzira ls [OPTIONS]
   'Current sprint' is understood as the first 'active' sprint found. To avoid
   ambiguity, use --sprint-id option.
 
+  Format can be one of supported tabulate formats or CSV, JSON.
+
 Options:
   -s, --state [active|closed]  Sprint state used for filtering  [default:
                                active]
   -i, --sprint-id INTEGER      Sprint id to get unambiguous result, helpful
                                when multiple active sprints; has precedence
                                over --state
+  -f, --format TEXT            Output format: supports tabulate formats + CSV
+                               and JSON  [default: simple_grid]
   -h, --help                   Show this message and exit.
 ```
 
@@ -143,10 +147,11 @@ Options:
 ```
 Usage: dzira report [OPTIONS]
 
-  Show work logged for today or for DATE.
+  Show work logged for today or for DATE using given FORMAT.
 
 Options:
   -d, --date [%Y-%m-%d|%Y-%m-%dT%H:%M:%S|%Y-%m-%d %H:%M:%S]
                                   Date to show report for
-  -h, --help                      Show this message and exit.
+  -f, --format [simple|csv|json]  How to display the report  [default: simple]
+  -h, --help                      Show this message and exit
 ```

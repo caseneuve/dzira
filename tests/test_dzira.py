@@ -2,19 +2,23 @@ import datetime
 import os
 import sys
 import time
+from collections import namedtuple
 from unittest.mock import Mock, PropertyMock, call, patch, sentinel
-from jira.exceptions import JIRAError
 
-import pytest
 import click
+import pytest
+import tabulate
 from click.testing import CliRunner
+from jira.exceptions import JIRAError
 
 import src.dzira.dzira as dzira
 from src.dzira.dzira import (
     CONFIG_DIR_NAME,
     D,
+    DEFAULT_OUTPUT_FORMAT,
     DOTFILE,
     VALIDATE_DATE_FORMATS,
+    VALID_OUTPUT_FORMATS,
     Result,
     _get_sprints,
     _seconds_to_hour_minute_fmt,
@@ -47,10 +51,12 @@ from src.dzira.dzira import (
     report,
     sanitize_params,
     show_cursor,
+    show_issues,
     show_report,
     update_worklog,
     validate_date,
     validate_hour,
+    validate_output_format,
     validate_time,
 )
 
@@ -65,6 +71,41 @@ def config(mocker):
         "JIRA_PROJECT_KEY": "XYZ",
     }
     return mock_dotenv_values
+
+
+@pytest.fixture
+def mock_print(mocker):
+    return mocker.patch("src.dzira.dzira.print")
+
+
+@pytest.fixture
+def mock_tabulate(mocker):
+    return mocker.patch("src.dzira.dzira.tabulate")
+
+
+@pytest.fixture
+def mock_json(mocker):
+    return mocker.patch("src.dzira.dzira.json")
+
+
+@pytest.fixture
+def mock_csv(mocker):
+    return mocker.patch("src.dzira.dzira.csv")
+
+
+@pytest.fixture
+def mock_isatty(mocker):
+    return mocker.patch("src.dzira.dzira.sys.stdin.isatty", Mock(return_value=True))
+
+
+@pytest.fixture
+def mock_set_color_use(mocker):
+    return mocker.patch("src.dzira.dzira.set_color_use")
+
+
+@pytest.fixture
+def mock_set_spinner_use(mocker):
+    return mocker.patch("src.dzira.dzira.set_spinner_use")
 
 
 class TestC:
@@ -111,14 +152,14 @@ class TestCursorHelpers:
 
         hide_cursor()
 
-        mock_print.assert_called_once_with("\033[?25l", end="", flush=True)
+        mock_print.assert_called_once_with("\033[?25l", end="", flush=True, file=sys.stderr)
 
     def test_shows_cursor(self, mocker):
         mock_print = mocker.patch("src.dzira.dzira.print")
 
         show_cursor()
 
-        mock_print.assert_called_once_with("\033[?25h", end="", flush=True)
+        mock_print.assert_called_once_with("\033[?25h", end="", flush=True, file=sys.stderr)
 
 
 class TestResult:
@@ -595,6 +636,118 @@ class TestGetSprintAndIssues:
         assert result == mock_get_issues.return_value.result
 
 
+class TestShowIssues:
+    def setup(self):
+        status = namedtuple("status", ["name"])
+        issue1 = Mock(
+            key="XYZ-1",
+            fields=Mock(
+                summary="description 1",
+                status=status("In Progress"),
+                timespent=3600*4,
+                timetracking=Mock(
+                    remainingEstimate="1d",
+                    originalEstimate="2d"
+                )
+            )
+        )
+        issue2 = Mock(
+            key="XYZ-2",
+            fields=Mock(
+                summary="description 2",
+                status=status(name="To Do"),
+                timespent=3600*2,
+                timetracking=Mock(
+                    remainingEstimate="3d",
+                    originalEstimate="3d"
+                )
+            )
+        )
+        self.issues = [issue1, issue2]
+        self.headers = ("#", "summary", "state", "spent", "estimated")
+        self.processed_issues = [
+            (
+                "XYZ-2", "description 2", "To Do",
+                str(datetime.timedelta(seconds=3600*2)), "3d"
+            ),
+            (
+                "XYZ-1", "description 1", "In Progress",
+                str(datetime.timedelta(seconds=3600*4)), "1d (2d)"
+            )
+        ]
+        dzira.use_color = False
+
+    def test_shows_data_extracted_from_jira_issues(self, mock_print, mock_tabulate):
+        show_issues(self.issues, format=sentinel.fmt)
+
+        mock_tabulate.assert_called_once_with(
+            self.processed_issues,
+            headers=self.headers,
+            colalign=("right", "left", "left", "right", "right"),
+            maxcolwidths=[None, 35, None, None, None],
+            tablefmt=sentinel.fmt
+        )
+        mock_print.assert_called_once_with(mock_tabulate.return_value)
+
+    @pytest.mark.parametrize("fmt", tabulate.tabulate_formats)
+    def test_uses_tabulate_if_format_other_than_csv_or_json(
+            self, fmt, mock_tabulate, mock_json, mock_csv
+    ):
+        show_issues(self.issues, format=fmt)
+
+        mock_tabulate.assert_called()
+        assert not mock_json.dumps.called
+        assert not mock_csv.DictWriter.called
+
+    def test_prints_json(self, mock_tabulate, mock_json, mock_csv):
+        show_issues(self.issues, format="json")
+
+        mock_json.dumps.assert_called_once_with(
+            [dict(zip(self.headers, i)) for i in self.processed_issues]
+        )
+        assert not mock_tabulate.called
+        assert not mock_csv.DictWriter.called
+
+    def test_prints_csv(self, mock_tabulate, mock_json, mock_csv):
+        show_issues(self.issues, format="csv")
+
+        mock_csv.DictWriter.assert_called_once_with(sys.stdout, fieldnames=self.headers)
+        mock_csv.DictWriter.return_value.writeheader.assert_called_once()
+        mock_csv.DictWriter.return_value.writerows.assert_called_once_with(
+            [dict(zip(self.headers, i)) for i in self.processed_issues]
+        )
+        assert not mock_tabulate.called
+        assert not mock_json.dumps.called
+
+
+class TestSetColorUse:
+    @pytest.mark.parametrize(
+        "input,isatty,expected",
+        [(True, True, True), (False, True, False), (True, False, False)]
+    )
+    def test_sets_color_option_using_user_input_and_interactivity_state(self, input, isatty, expected):
+        dzira.sys.stdin.isatty = lambda: isatty
+
+        dzira.set_color_use(input)
+
+        assert dzira.use_color is expected
+
+
+class TestSetSpinnerUse:
+    @pytest.mark.parametrize(
+        "input,isatty,expected",
+        [(True, True, True), (False, True, False), (True, False, False)]
+    )
+    def test_sets_spinner_option_using_user_input_and_interactivity_state(
+            self, input, isatty, expected
+    ):
+        dzira.sys.stdin.isatty = lambda: isatty
+
+        dzira.set_spinner_use(input)
+
+        assert dzira.use_spinner is expected
+
+
 class CliTest:
     runner = CliRunner()
 
@@ -606,17 +759,43 @@ class TestCli(CliTest):
         assert result.exit_code == 0
         assert "Configure JIRA connection" in result.output
 
-    def test_by_default_uses_colorful_output(self):
-        result = self.runner.invoke(dzira.cli, ["log", "-h"])
+    def test_by_default_uses_colorful_output(self, mock_set_color_use):
+        result = self.runner.invoke(cli, ["log", "-h"])
 
         assert result.exit_code == 0
-        assert dzira.use_color
+        mock_set_color_use.assert_called_once_with(True)
 
-    def test_supports_option_to_set_use_color(self):
-        result = self.runner.invoke(dzira.cli, ["--no-color", "log", "-h"])
+    def test_supports_option_to_set_use_color(self, mock_set_color_use):
+        result = self.runner.invoke(cli, ["--no-color", "log", "-h"])
 
         assert result.exit_code == 0
-        assert dzira.use_color is False
+        mock_set_color_use.assert_called_once_with(False)
+
+    def test_by_default_uses_spinner(self, mock_set_spinner_use):
+        result = self.runner.invoke(cli, ["log", "-h"])
+
+        assert result.exit_code == 0
+        mock_set_spinner_use.assert_called_once_with(True)
+
+    def test_supports_option_to_set_spinner(self, mock_set_spinner_use):
+        result = self.runner.invoke(cli, ["--no-spin", "log", "-h"])
+
+        assert result.exit_code == 0
+        mock_set_spinner_use.assert_called_once_with(False)
+
+
+class TestValidateOutputFormat:
+    @pytest.mark.parametrize(
+        "fmt", VALID_OUTPUT_FORMATS + list(map(str.upper, VALID_OUTPUT_FORMATS))
+    )
+    def test_returns_lowered_format_if_valid(self, fmt):
+        validate_output_format(Mock(), Mock(), fmt)
+
+    def test_raises_when_format_invalid(self):
+        with pytest.raises(click.BadParameter) as exc_info:
+            validate_output_format(Mock(), Mock(), "invalid")
+
+        assert f"format should be one of" in str(exc_info)
 
 
 class TestLs(CliTest):
@@ -638,7 +817,7 @@ class TestLs(CliTest):
         result = self.runner.invoke(cli, ["--token", "foo", "ls"])
 
         assert result.exit_code == 0
-        mock_show_issues.assert_called_once_with(sentinel.issues)
+        mock_show_issues.assert_called_once_with(sentinel.issues, format=DEFAULT_OUTPUT_FORMAT)
         mock_get_sprint_and_issues.assert_called_once_with(
             sentinel.jira, D(state="active", sprint_id=None, **mock_config)
         )
@@ -669,7 +848,7 @@ class TestLs(CliTest):
         result = self.runner.invoke(cli, ["ls", "--state", "closed"])
 
         assert result.exit_code == 0
-        mock_show_issues.assert_called_once_with(sentinel.issues)
+        mock_show_issues.assert_called_once_with(sentinel.issues, format=DEFAULT_OUTPUT_FORMAT)
         mock_get_sprint_and_issues.assert_called_once_with(
             sentinel.jira, D(state="closed", sprint_id=None, **mock_get_config.return_value)
         )
@@ -686,10 +865,21 @@ class TestLs(CliTest):
         result = self.runner.invoke(cli, ["ls", "--sprint-id", "42"])
 
         assert result.exit_code == 0
-        mock_show_issues.assert_called_once_with(sentinel.issues)
+        mock_show_issues.assert_called_once_with(sentinel.issues, format=DEFAULT_OUTPUT_FORMAT)
         mock_get_sprint_and_issues.assert_called_once_with(
             sentinel.jira, D(state="active", sprint_id=42, **mock_get_config.return_value)
         )
+
+    def test_supports_tabulate_formats_option(self, mocker):
+        mocker.patch("src.dzira.dzira.get_config")
+        mocker.patch("src.dzira.dzira.get_jira")
+        mock_issues = mocker.patch("src.dzira.dzira.get_sprint_and_issues")
+        mock_show_issues = mocker.patch("src.dzira.dzira.show_issues")
+
+        result = self.runner.invoke(cli, ["ls", "--format", "orgtbl"])
+
+        assert result.exit_code == 0
+        mock_show_issues.assert_called_once_with(mock_issues.return_value, format="orgtbl")
 
 
 class TestCorrectTimeFormats:
@@ -1199,7 +1389,7 @@ class TestGetUserWorklogsFromDate:
             Result(result=self.issues, data=D(report_date=datetime.datetime(2023, 11, 26, 0, 0)))
         )
 
-        assert result.result == D({"[Issue-1] Foo bar": [self.worklog1]})
+        assert result.result == D({("Issue-1", "Foo bar"): [self.worklog1]})
         assert "Found 1 worklog" in result.stdout
 
     def test_catches_jira_errors_and_raises_readable_exception(self):
@@ -1251,13 +1441,22 @@ class TestShowReport:
             author=Mock(accountId="123"),
             id="2"
         )
+        self.worklogs_of_issues = D(
+            {
+                ("XY-1", "issue 1"): [self.worklog1],
+                ("XY-2", "issue 2"): [self.worklog2]
+            }
+        )
 
+    @patch("src.dzira.dzira.json")
+    @patch("src.dzira.dzira.csv")
     @patch("src.dzira.dzira.print")
     @patch("src.dzira.dzira.tabulate")
     def test_uses_tabulate_to_show_the_report_with_worklog_id_timestamp_timespent_and_comment(
-            self, mock_tabulate, mock_print
+            self, mock_tabulate, mock_print, mock_csv, mock_json
     ):
-        show_report(D({"issue1": [self.worklog1], "issue2": [self.worklog2]}))
+        mock_tabulate.side_effect = [sentinel.t1, sentinel.t2]
+        show_report(self.worklogs_of_issues, format="simple")
 
         assert mock_tabulate.call_args_list == [
             call([["[1]", "12:42:16", ":   30m", "task a"]], maxcolwidths=[None, None, None, 60]),
@@ -1265,12 +1464,84 @@ class TestShowReport:
         ]
         mock_print.assert_has_calls(
             [
-                call(c("^bold", "issue1"), "(0h 30m)"),
-                call(c("^bold", "issue2"), "(1h 15m)"),
-                call(mock_tabulate.return_value),
+                call(c("^bold", "[XY-1] issue 1 ", "^cyan", "(0h 30m)")),
+                call(sentinel.t1),
+                call(c("^bold", "[XY-2] issue 2 ", "^cyan", "(1h 15m)")),
+                call(sentinel.t2)
              ],
             any_order=True
         )
+        assert not mock_csv.DictWriter.called
+        assert not mock_json.dumps.called
+
+    @patch("src.dzira.dzira.tabulate")
+    @patch("src.dzira.dzira.json")
+    @patch("src.dzira.dzira.print")
+    @patch("src.dzira.dzira.csv")
+    def test_prints_data_in_csv_format(
+            self, mock_csv, mock_print, mock_json, mock_tabulate
+    ):
+        show_report(self.worklogs_of_issues, format="csv")
+
+        headers = ["issue", "summary", "worklog", "started", "spent", "spent_seconds", "comment"]
+        processed_worklogs = [
+            ["XY-1", "issue 1", "1", "12:42:16", "30m", 30 * 60, "task a"],
+            ["XY-2", "issue 2", "2", "14:42:00", "1h 15m", (60 * 60) + (15 * 60), "task b"]
+        ]
+        mock_csv.DictWriter.assert_called_once_with(sys.stdout, fieldnames=headers)
+        mock_csv.DictWriter.return_value.writeheader.assert_called_once()
+        mock_csv.DictWriter.return_value.writerows.assert_called_once_with(
+            [dict(zip(headers, w)) for w in processed_worklogs]
+        )
+        assert not mock_tabulate.called
+        assert not mock_json.dumps.called
+        assert not mock_print.called
+
+    @patch("src.dzira.dzira.tabulate")
+    @patch("src.dzira.dzira.json")
+    @patch("src.dzira.dzira.print")
+    @patch("src.dzira.dzira.csv")
+    def test_prints_data_in_json_format(
+            self, mock_csv, mock_print, mock_json, mock_tabulate
+    ):
+        show_report(self.worklogs_of_issues, format="json")
+
+        processed_worklogs = {
+            "XY-1": {
+                "summary": "issue 1",
+                "issue_total_time": "0h 30m",
+                "issue_total_spent_seconds": 30 * 60,
+                "worklogs": [
+                    {
+                        "id": "1",
+                        "started": "12:42:16",
+                        "spent": "30m",
+                        "spent_seconds": 30 * 60,
+                        "comment": "task a"
+                    }
+                ]
+            },
+            "XY-2": {
+                "summary": "issue 2",
+                "issue_total_time": "1h 15m",
+                "issue_total_spent_seconds": (60 * 60) + (15 * 60),
+                "worklogs": [
+                    {
+                        "id": "2",
+                        "started": "14:42:00",
+                        "spent": "1h 15m",
+                        "spent_seconds": (60 * 60) + (15 * 60),
+                        "comment": "task b"
+                    }
+                ]
+            },
+            "total_time": "1h 45m",
+            "total_seconds": (30 * 60) + (60 * 60) + (15 * 60)
+        }
+        mock_json.dumps.assert_called_once_with(processed_worklogs)
+        mock_print.assert_called_once_with(mock_json.dumps.return_value)
+        assert not mock_csv.DictWriter.called
+        assert not mock_tabulate.called
 
 
 class TestReport(CliTest):
@@ -1313,7 +1584,8 @@ class TestReport(CliTest):
             mock_get_issues_with_work_logged_on_date.return_value
         )
         mock_show_report.assert_called_once_with(
-            mock_get_user_worklogs_from_date.return_value.result
+            mock_get_user_worklogs_from_date.return_value.result,
+            format="simple"
         )
 
     @patch("src.dzira.dzira.get_user", Mock())
@@ -1333,6 +1605,50 @@ class TestReport(CliTest):
         self.runner.invoke(report, ["--date", "2023-11-26"])
 
         assert not mock_get_user_worklogs_from_date.called
+        assert not mock_show_report.called
+
+    @pytest.mark.parametrize("fmt", ["csv", "json", "simple"])
+    @patch("src.dzira.dzira.get_user", Mock())
+    @patch("src.dzira.dzira.get_jira", Mock(return_value=Mock(result=sentinel.jira)))
+    @patch("src.dzira.dzira.get_config", Mock(return_value=Mock(result=sentinel.user)))
+    @patch("src.dzira.dzira.show_report")
+    @patch("src.dzira.dzira.get_user_worklogs_from_date")
+    @patch("src.dzira.dzira.get_issues_with_work_logged_on_date")
+    def test_accepts_format_option(
+            self,
+            mock_get_issues_with_work_logged_on_date,
+            mock_get_user_worklogs_from_date,
+            mock_show_report,
+            fmt
+    ):
+        mock_get_issues_with_work_logged_on_date.return_value = Result(result=[sentinel.issue])
+        mock_worklogs = [Mock()]
+        mock_get_user_worklogs_from_date.return_value = Result(result=mock_worklogs)
+
+        result = self.runner.invoke(report, ["--format", fmt])
+
+        assert result.exit_code == 0
+        mock_show_report.assert_called_once_with(mock_worklogs, format=fmt)
+
+    @patch("src.dzira.dzira.get_user", Mock())
+    @patch("src.dzira.dzira.get_jira", Mock(return_value=Mock(result=sentinel.jira)))
+    @patch("src.dzira.dzira.get_config", Mock(return_value=Mock(result=sentinel.user)))
+    @patch("src.dzira.dzira.show_report")
+    @patch("src.dzira.dzira.get_user_worklogs_from_date")
+    @patch("src.dzira.dzira.get_issues_with_work_logged_on_date")
+    def test_raises_when_wrong_format_option(
+            self,
+            mock_get_issues_with_work_logged_on_date,
+            mock_get_user_worklogs_from_date,
+            mock_show_report,
+    ):
+        mock_get_issues_with_work_logged_on_date.return_value = Result(result=[sentinel.issue])
+        mock_worklogs = [Mock()]
+        mock_get_user_worklogs_from_date.return_value = Result(result=mock_worklogs)
+
+        result = self.runner.invoke(report, ["--format", "foo"])
+
+        assert result.exit_code == 2
         assert not mock_show_report.called
 
 
@@ -1358,7 +1674,7 @@ class TestMain:
         mock_print.assert_called_once_with(exc, file=sys.stderr)
         mock_exit.assert_called_once_with(1)
 
-    def test_hides_and_shows_the_cursor(self, mocker):
+    def test_hides_and_shows_the_cursor_when_in_interactive_shell(self, mocker, mock_isatty):
         mocker.patch("src.dzira.dzira.cli")
         mock_hide = mocker.patch("src.dzira.dzira.hide_cursor")
         mock_show = mocker.patch("src.dzira.dzira.show_cursor")
@@ -1367,3 +1683,16 @@ class TestMain:
 
         mock_hide.assert_called_once()
         mock_show.assert_called_once()
+
+    def test_does_not_hide_or_show_the_cursor_when_in_not_interactive_shell(
+            self, mocker, mock_isatty
+    ):
+        mocker.patch("src.dzira.dzira.cli")
+        mock_isatty.return_value = False
+        mock_hide = mocker.patch("src.dzira.dzira.hide_cursor")
+        mock_show = mocker.patch("src.dzira.dzira.show_cursor")
+
+        main()
+
+        assert not mock_hide.called
+        assert not mock_show.called
