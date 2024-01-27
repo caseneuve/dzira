@@ -149,9 +149,41 @@ Usage: dzira report [OPTIONS]
 
   Show work logged for today or for DATE using given FORMAT.
 
+  TABLE format (default) will print a table with summary showing worklogs for
+  every issue having work logged on given DATE.
+
+  CSV and JSON formats are indended to be parsable.
+
+  CSV format:
+    issue, summary, worklog, started, spent, spent_seconds, comment
+    XY-1,Foo bar,1234,12:45:00,1h 15m,4500,implementing foo in bar
+
+  JSON format:
+    {
+      "issues": [
+        {
+          "key": "XY-1",
+          "summary": "Foo bar",
+          "issue_total_time": "1h 15m",
+          "issue_total_spent_seconds": 4500,
+          "worklogs": [
+            {
+              "id": "1",
+              "started": "12:45:00",
+              "spent": "1h 15m",
+              "spent_seconds": 4500,
+              "comment": "implementing foo in bar"
+            }
+          ]
+        },
+      ],
+      "total_time": "1h 15m",
+      "total_seconds": 4500
+    }
+
 Options:
   -d, --date [%Y-%m-%d|%Y-%m-%dT%H:%M:%S|%Y-%m-%d %H:%M:%S]
                                   Date to show report for
-  -f, --format [simple|csv|json]  How to display the report  [default: simple]
+  -f, --format [table|csv|json]   How to display the report  [default: table]
   -h, --help                      Show this message and exit
 ```
