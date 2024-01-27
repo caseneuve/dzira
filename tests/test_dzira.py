@@ -1389,7 +1389,7 @@ class TestGetUserWorklogsFromDate:
             Result(result=self.issues, data=D(report_date=datetime.datetime(2023, 11, 26, 0, 0)))
         )
 
-        assert result.result == D({"[Issue-1] Foo bar": [self.worklog1]})
+        assert result.result == D({("Issue-1", "Foo bar"): [self.worklog1]})
         assert "Found 1 worklog" in result.stdout
 
     def test_catches_jira_errors_and_raises_readable_exception(self):
@@ -1441,13 +1441,22 @@ class TestShowReport:
             author=Mock(accountId="123"),
             id="2"
         )
+        self.worklogs_of_issues = D(
+            {
+                ("XY-1", "issue 1"): [self.worklog1],
+                ("XY-2", "issue 2"): [self.worklog2]
+            }
+        )
 
+    @patch("src.dzira.dzira.json")
+    @patch("src.dzira.dzira.csv")
     @patch("src.dzira.dzira.print")
     @patch("src.dzira.dzira.tabulate")
     def test_uses_tabulate_to_show_the_report_with_worklog_id_timestamp_timespent_and_comment(
-            self, mock_tabulate, mock_print
+            self, mock_tabulate, mock_print, mock_csv, mock_json
     ):
-        show_report(D({"issue1": [self.worklog1], "issue2": [self.worklog2]}))
+        mock_tabulate.side_effect = [sentinel.t1, sentinel.t2]
+        show_report(self.worklogs_of_issues, format="simple")
 
         assert mock_tabulate.call_args_list == [
             call([["[1]", "12:42:16", ":   30m", "task a"]], maxcolwidths=[None, None, None, 60]),
@@ -1455,12 +1464,84 @@ class TestShowReport:
         ]
         mock_print.assert_has_calls(
             [
-                call(c("^bold", "issue1"), "(0h 30m)"),
-                call(c("^bold", "issue2"), "(1h 15m)"),
-                call(mock_tabulate.return_value),
+                call(c("^bold", "[XY-1] issue 1 ", "^cyan", "(0h 30m)")),
+                call(sentinel.t1),
+                call(c("^bold", "[XY-2] issue 2 ", "^cyan", "(1h 15m)")),
+                call(sentinel.t2)
              ],
             any_order=True
         )
+        assert not mock_csv.DictWriter.called
+        assert not mock_json.dumps.called
+
+    @patch("src.dzira.dzira.tabulate")
+    @patch("src.dzira.dzira.json")
+    @patch("src.dzira.dzira.print")
+    @patch("src.dzira.dzira.csv")
+    def test_prints_data_in_csv_format(
+            self, mock_csv, mock_print, mock_json, mock_tabulate
+    ):
+        show_report(self.worklogs_of_issues, format="csv")
+
+        headers = ["issue", "summary", "worklog", "started", "spent", "spent_seconds", "comment"]
+        processed_worklogs = [
+            ["XY-1", "issue 1", "1", "12:42:16", "30m", 30 * 60, "task a"],
+            ["XY-2", "issue 2", "2", "14:42:00", "1h 15m", (60 * 60) + (15 * 60), "task b"]
+        ]
+        mock_csv.DictWriter.assert_called_once_with(sys.stdout, fieldnames=headers)
+        mock_csv.DictWriter.return_value.writeheader.assert_called_once()
+        mock_csv.DictWriter.return_value.writerows.assert_called_once_with(
+            [dict(zip(headers, w)) for w in processed_worklogs]
+        )
+        assert not mock_tabulate.called
+        assert not mock_json.dumps.called
+        assert not mock_print.called
+
+    @patch("src.dzira.dzira.tabulate")
+    @patch("src.dzira.dzira.json")
+    @patch("src.dzira.dzira.print")
+    @patch("src.dzira.dzira.csv")
+    def test_prints_data_in_json_format(
+            self, mock_csv, mock_print, mock_json, mock_tabulate
+    ):
+        show_report(self.worklogs_of_issues, format="json")
+
+        processed_worklogs = {
+            "XY-1": {
+                "summary": "issue 1",
+                "issue_total_time": "0h 30m",
+                "issue_total_spent_seconds": 30 * 60,
+                "worklogs": [
+                    {
+                        "id": "1",
+                        "started": "12:42:16",
+                        "spent": "30m",
+                        "spent_seconds": 30 * 60,
+                        "comment": "task a"
+                    }
+                ]
+            },
+            "XY-2": {
+                "summary": "issue 2",
+                "issue_total_time": "1h 15m",
+                "issue_total_spent_seconds": (60 * 60) + (15 * 60),
+                "worklogs": [
+                    {
+                        "id": "2",
+                        "started": "14:42:00",
+                        "spent": "1h 15m",
+                        "spent_seconds": (60 * 60) + (15 * 60),
+                        "comment": "task b"
+                    }
+                ]
+            },
+            "total_time": "1h 45m",
+            "total_seconds": (30 * 60) + (60 * 60) + (15 * 60)
+        }
+        mock_json.dumps.assert_called_once_with(processed_worklogs)
+        mock_print.assert_called_once_with(mock_json.dumps.return_value)
+        assert not mock_csv.DictWriter.called
+        assert not mock_tabulate.called
 
 
 class TestReport(CliTest):
@@ -1503,7 +1584,8 @@ class TestReport(CliTest):
             mock_get_issues_with_work_logged_on_date.return_value
         )
         mock_show_report.assert_called_once_with(
-            mock_get_user_worklogs_from_date.return_value.result
+            mock_get_user_worklogs_from_date.return_value.result,
+            format="simple"
         )
 
     @patch("src.dzira.dzira.get_user", Mock())
@@ -1523,6 +1605,50 @@ class TestReport(CliTest):
         self.runner.invoke(report, ["--date", "2023-11-26"])
 
         assert not mock_get_user_worklogs_from_date.called
+        assert not mock_show_report.called
+
+    @pytest.mark.parametrize("fmt", ["csv", "json", "simple"])
+    @patch("src.dzira.dzira.get_user", Mock())
+    @patch("src.dzira.dzira.get_jira", Mock(return_value=Mock(result=sentinel.jira)))
+    @patch("src.dzira.dzira.get_config", Mock(return_value=Mock(result=sentinel.user)))
+    @patch("src.dzira.dzira.show_report")
+    @patch("src.dzira.dzira.get_user_worklogs_from_date")
+    @patch("src.dzira.dzira.get_issues_with_work_logged_on_date")
+    def test_accepts_format_option(
+            self,
+            mock_get_issues_with_work_logged_on_date,
+            mock_get_user_worklogs_from_date,
+            mock_show_report,
+            fmt
+    ):
+        mock_get_issues_with_work_logged_on_date.return_value = Result(result=[sentinel.issue])
+        mock_worklogs = [Mock()]
+        mock_get_user_worklogs_from_date.return_value = Result(result=mock_worklogs)
+
+        result = self.runner.invoke(report, ["--format", fmt])
+
+        assert result.exit_code == 0
+        mock_show_report.assert_called_once_with(mock_worklogs, format=fmt)
+
+    @patch("src.dzira.dzira.get_user", Mock())
+    @patch("src.dzira.dzira.get_jira", Mock(return_value=Mock(result=sentinel.jira)))
+    @patch("src.dzira.dzira.get_config", Mock(return_value=Mock(result=sentinel.user)))
+    @patch("src.dzira.dzira.show_report")
+    @patch("src.dzira.dzira.get_user_worklogs_from_date")
+    @patch("src.dzira.dzira.get_issues_with_work_logged_on_date")
+    def test_raises_when_wrong_format_option(
+            self,
+            mock_get_issues_with_work_logged_on_date,
+            mock_get_user_worklogs_from_date,
+            mock_show_report,
+    ):
+        mock_get_issues_with_work_logged_on_date.return_value = Result(result=[sentinel.issue])
+        mock_worklogs = [Mock()]
+        mock_get_user_worklogs_from_date.return_value = Result(result=mock_worklogs)
+
+        result = self.runner.invoke(report, ["--format", "foo"])
+
+        assert result.exit_code == 2
         assert not mock_show_report.called
 
 

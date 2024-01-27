@@ -770,8 +770,7 @@ def get_user_worklogs_from_date(jira: JIRA, user: User, issues: Result) -> Resul
             if matching:
                 key = issue.raw["key"]
                 summary = issue.raw["fields"]["summary"]
-                # worklogs[f"[{key}] {summary}"] = matching
-                worklogs.update(f"[{key}] {summary}", matching, counter=lambda x: x + (len(matching)))
+                worklogs.update((key, summary), matching, counter=lambda x: x + (len(matching)))
         except Exception as exc:
             raise Exception(str(exc))
 
@@ -790,40 +789,85 @@ def _seconds_to_hour_minute_fmt(seconds):
     return f"{hours}h {minutes:02}m"
 
 
-def show_report(worklogs: D) -> None:
+def show_report(worklogs: D, format: str | None) -> None:
     total_time = 0
+    csv_rows = []
+    json_dict = {}
+    tables = []
     for issue in worklogs:
-        this_total_time = 0
-        rows = []
+        key, summary = issue
+        issue_total_time = 0
+        issue_worklogs = []
         for w in worklogs[issue]:
             started, time_spent, comment, time_spent_seconds = D(w.raw)(
                 "started", "timeSpent", "comment", "timeSpentSeconds"
             )
             total_time += time_spent_seconds
-            this_total_time += time_spent_seconds
+            issue_total_time += time_spent_seconds
             local_timestamp = datetime.strptime(started, '%Y-%m-%dT%H:%M:%S.%f%z').astimezone()
             formatted_time = local_timestamp.strftime('%H:%M:%S')
-            row = [f"[{w.id}]", formatted_time, f":{time_spent:>6}", comment or ""]
-            rows.append(row)
 
-        print()
-        print(c("^bold", issue), f"({_seconds_to_hour_minute_fmt(this_total_time)})")
-        print(tabulate(rows, maxcolwidths=[None, None, None, 60]))
+            if format == "csv":
+                processed_worklog = [
+                    key, summary, w.id, formatted_time, time_spent, time_spent_seconds, comment
+                ]
+                csv_rows.append(processed_worklog)
+            elif format == "json":
+                processed_worklog = {
+                    "id": w.id,
+                    "started": local_timestamp.strftime("%H:%M:%S"),
+                    "spent": time_spent,
+                    "spent_seconds": time_spent_seconds,
+                    "comment": comment
+                }
+            else:
+                processed_worklog = [f"[{w.id}]", formatted_time, f":{time_spent:>6}", comment or ""]
+            issue_worklogs.append(processed_worklog)
 
-    if worklogs:
+        if format == "simple":
+            header = c(
+                "^bold", f"[{key}] {summary} ",
+                "^cyan", f"({_seconds_to_hour_minute_fmt(issue_total_time)})"
+            )
+            tables.append((header, issue_worklogs))
+        elif format == "json":
+            json_dict[key] = {
+                "summary": summary,
+                "issue_total_time": _seconds_to_hour_minute_fmt(issue_total_time),
+                "issue_total_spent_seconds": issue_total_time,
+                "worklogs": issue_worklogs
+            }
+
+    if format == "csv":
+        headers = ["issue", "summary", "worklog", "started", "spent", "spent_seconds", "comment"]
+        writer = csv.DictWriter(sys.stdout, fieldnames=headers)
+        writer.writeheader()
+        writer.writerows([dict(zip(headers, row)) for row in csv_rows])
+    elif format == "json":
+        json_dict["total_time"] = _seconds_to_hour_minute_fmt(total_time)
+        json_dict["total_seconds"] = total_time
+        print(json.dumps(json_dict))
+    else:
+        for header, rows in tables:
+            print()
+            print(header)
+            print(tabulate(rows, maxcolwidths=[None, None, None, 60]))
         print(f"\n{c('^bold', 'Total spent time')}: {_seconds_to_hour_minute_fmt(total_time)}\n")
 
 
-# TODO:
-# - [ ] sprint option
-# - [ ] save to csv, json format
+# TODO: add sprint option
 @cli.command()
 @click.pass_context
 @click.option("-d", "--date", "report_date", help="Date to show report for", type=click.DateTime())
-@click.help_option("-h", "--help")
-def report(ctx, report_date):
+@click.option(
+    "-f", "--format",
+    type=click.Choice(["simple", "csv", "json"]), default="simple", show_default=True,
+    help="How to display the report",
+)
+@click.help_option("-h", "--help", help="Show this message and exit")
+def report(ctx, report_date, format):
     """
-    Show work logged for today or for DATE.
+    Show work logged for today or for DATE using given FORMAT.
     """
     config = get_config(config=ctx.obj)
     jira = get_jira(config).result
@@ -831,7 +875,7 @@ def report(ctx, report_date):
     issues = get_issues_with_work_logged_on_date(jira, report_date)
     if issues.result:
         worklogs = get_user_worklogs_from_date(jira, user, issues).result
-        show_report(worklogs)
+        show_report(worklogs, format=format)
     else:
         print("No work logged on given date")
 

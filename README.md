@@ -35,7 +35,7 @@ Options:
 Commands:
   log     Log time spent on ISSUE number or ISSUE with description...
   ls      List issues from the current sprint.
-  report  Show work logged for today or for DATE.
+  report  Show work logged for today or for DATE using given FORMAT.
 ```
 
 
@@ -147,10 +147,11 @@ Options:
 ```
 Usage: dzira report [OPTIONS]
 
-  Show work logged for today or for DATE.
+  Show work logged for today or for DATE using given FORMAT.
 
 Options:
   -d, --date [%Y-%m-%d|%Y-%m-%dT%H:%M:%S|%Y-%m-%d %H:%M:%S]
                                   Date to show report for
-  -h, --help                      Show this message and exit.
+  -f, --format [simple|csv|json]  How to display the report  [default: simple]
+  -h, --help                      Show this message and exit
 ```
