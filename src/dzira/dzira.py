@@ -412,7 +412,7 @@ def show_issues(issues: list, format: str) -> None:
         except Exception:
             return fmt(i.fields.timeestimate)
 
-    headers = ("#", "summary", "state", "spent", "estimated")
+    headers = ("key", "summary", "state", "spent", "estimated")
     issues = [
         (
             c("^blue", i.key),
@@ -792,7 +792,7 @@ def _seconds_to_hour_minute_fmt(seconds):
 def show_report(worklogs: D, format: str | None) -> None:
     total_time = 0
     csv_rows = []
-    json_dict = {}
+    json_dict = {"issues": [], "total_time": None, "total_seconds": None}
     tables = []
     for issue in worklogs:
         key, summary = issue
@@ -824,19 +824,22 @@ def show_report(worklogs: D, format: str | None) -> None:
                 processed_worklog = [f"[{w.id}]", formatted_time, f":{time_spent:>6}", comment or ""]
             issue_worklogs.append(processed_worklog)
 
-        if format == "simple":
+        if format == "table":
             header = c(
                 "^bold", f"[{key}] {summary} ",
                 "^cyan", f"({_seconds_to_hour_minute_fmt(issue_total_time)})"
             )
             tables.append((header, issue_worklogs))
         elif format == "json":
-            json_dict[key] = {
-                "summary": summary,
-                "issue_total_time": _seconds_to_hour_minute_fmt(issue_total_time),
-                "issue_total_spent_seconds": issue_total_time,
-                "worklogs": issue_worklogs
-            }
+            json_dict["issues"].append(
+                {
+                    "key": key,
+                    "summary": summary,
+                    "issue_total_time": _seconds_to_hour_minute_fmt(issue_total_time),
+                    "issue_total_spent_seconds": issue_total_time,
+                    "worklogs": issue_worklogs
+                }
+            )
 
     if format == "csv":
         headers = ["issue", "summary", "worklog", "started", "spent", "spent_seconds", "comment"]
@@ -852,7 +855,10 @@ def show_report(worklogs: D, format: str | None) -> None:
             print()
             print(header)
             print(tabulate(rows, maxcolwidths=[None, None, None, 60]))
-        print(f"\n{c('^bold', 'Total spent time')}: {_seconds_to_hour_minute_fmt(total_time)}\n")
+        if tables:
+            print(f"\n{c('^bold', 'Total spent time')}: {_seconds_to_hour_minute_fmt(total_time)}\n")
+        else:
+            print("No work logged on given date")
 
 
 # TODO: add sprint option
@@ -861,13 +867,45 @@ def show_report(worklogs: D, format: str | None) -> None:
 @click.option("-d", "--date", "report_date", help="Date to show report for", type=click.DateTime())
 @click.option(
     "-f", "--format",
-    type=click.Choice(["simple", "csv", "json"]), default="simple", show_default=True,
+    type=click.Choice(["table", "csv", "json"]), default="table", show_default=True,
     help="How to display the report",
 )
 @click.help_option("-h", "--help", help="Show this message and exit")
 def report(ctx, report_date, format):
     """
     Show work logged for today or for DATE using given FORMAT.
+
+    TABLE format (default) will print a table with summary showing
+    worklogs for every issue having work logged on given DATE.
+
+    \b
+    CSV format:
+      issue, summary, worklog, started, spent, spent_seconds, comment
+      XY-1,Foo bar,1234,12:45:00,1h 15m,4500,implementing foo in bar
+
+    \b
+    JSON format:
+      {
+        "issues": [
+          {
+            "key": "XY-1",
+            "summary": "Foo bar",
+            "issue_total_time": "1h 15m",
+            "issue_total_spent_seconds": 4500,
+            "worklogs": [
+              {
+                "id": "1",
+                "started": "12:45:00",
+                "spent": "1h 15m",
+                "spent_seconds": 4500,
+                "comment": "implementing foo in bar"
+              }
+            ]
+          },
+        ],
+        "total_time": "1h 15m",
+        "total_seconds": 4500
+      }
     """
     config = get_config(config=ctx.obj)
     jira = get_jira(config).result
@@ -875,9 +913,9 @@ def report(ctx, report_date, format):
     issues = get_issues_with_work_logged_on_date(jira, report_date)
     if issues.result:
         worklogs = get_user_worklogs_from_date(jira, user, issues).result
-        show_report(worklogs, format=format)
     else:
-        print("No work logged on given date")
+        worklogs = D()
+    show_report(worklogs, format=format)
 
 
 @cli.command(hidden=True)
