@@ -59,7 +59,7 @@ def show_cursor():
 class D(dict):
     def __call__(self, *keys) -> Iterable:
         if keys:
-            return [self.get(k) for k in keys]
+            return [self.get(*k) if isinstance(k, tuple) else self.get(k) for k in keys]
         else:
             return self.values()
 
@@ -262,14 +262,13 @@ def get_issues(jira: JIRA, sprint: Sprint) -> Result:
 def add_worklog(
         jira: JIRA,
         issue: str,
-        time: str | None = None,
         comment: str | None = None,
         seconds: int | None = None,
         date: datetime | None = None,
         **_
 ) -> Result:
     work_log = jira.add_worklog(
-        issue=issue, timeSpent=time, timeSpentSeconds=seconds, comment=comment, started=date
+        issue=issue, timeSpentSeconds=seconds, comment=comment, started=date
     )
     return Result(
         stdout=(
@@ -493,10 +492,13 @@ def ls(ctx, state, sprint_id, format):
 ### Validators
 
 def matches_time_re(time: str) -> D:
-    m = re.match(
-        r"^(?P<h>([1-9]|1\d|2[0-3])h)?(\s*(?=\d))?(?P<m>([1-5]\d|[1-9])m)?$",
-        time
-    )
+    """
+    Allows strings '[h][ [m]]' with or without format indicators 'h/m',
+    not greater than 8h 59m, or only minutes not greater than 499m.
+    """
+    only_mins = re.compile(r"^(?P<m>(\d{2}|[1-4]\d{2}))m$")
+    hours_and_mins = re.compile(r"^(?P<h>([1-8]))h(\s*(?=\d))?((?P<m>([1-5]\d|[1-9]))m?)?$")
+    m = only_mins.match(time) or hours_and_mins.match(time)
     return D(m.groupdict() if m is not None else {})
 
 
@@ -504,15 +506,17 @@ def is_valid_hour(hour) -> bool:
     return re.match(r"^(([01]?\d|2[0-3])[:.h,])+([0-5]?\d)$", hour) is not None
 
 
-def validate_time(_, __, time):
+def validate_time(_, __, time) -> int:
     if time is None:
-        return
+        return 0
     if (match := matches_time_re(time)):
-        h, m = match("h", "m")
-        time = f"{h + ' ' if h is not None else ''}{m or ''}".strip()
-        return time
+        return sum(int(t) * s for t, s in zip(match("h", "m"), [3600, 60]) if t)
     raise click.BadParameter(
-        "time has to be in format '[Nh] [Nm]', e.g. '2h', '30m', '4h 15m'"
+        (
+            "time cannot be greater than 8h (1 day), "
+            "and has to be in format '[Nh][ N[m]]' or 'Nm', "
+            "e.g. '2h', '91m', '4h 37m', '1h59'."
+        )
     )
 
 
@@ -590,7 +594,7 @@ def calculate_seconds(payload: D) -> D:
     start, end = payload("start", "end")
 
     if start is None:
-        return payload
+        return payload.update("seconds", payload.get("time"))
 
     fmt = "%H:%M"
     unify = lambda t: datetime.strptime(re.sub(r"[,.h]", ":", t), fmt)
@@ -678,11 +682,13 @@ def perform_log_action(jira: JIRA, payload: D) -> None:
 )
 @click.help_option("-h", "--help")
 def log(ctx, **_):
-    """Log time spent on ISSUE number or ISSUE with description containing
+    """
+    Log time spent on ISSUE number or ISSUE with description containing
     matching string.
 
-    TIME spent should be in format '[[Nh][ ]][Nm]'; or it can be calculated
-    when START time is be provided;
+    TIME spent should be in format '[[Nh][ ]][Nm]'; or it can be
+    calculated when START time is be provided; it's assumed that time
+    spent for a single task cannot be greater than 1 day (8 hours).
 
     END time is optional, both should match 'H:M' format.
 
@@ -697,7 +703,8 @@ def log(ctx, **_):
     \b
       "YYYY-mm-dd", "YYYY-mm-ddTHH:MM", "YYYY-mm-dd HH:MM".
 
-    \b Time is assumed from the START option, if present and date is
+    \b
+    Time is calculated from the START option, if present, and date is
     not specifying it.  The script will try to figure out local
     timezone and adjust the log started time accordingly.
     """
