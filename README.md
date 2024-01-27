@@ -109,7 +109,8 @@ Usage: dzira log [OPTIONS] ISSUE
   string.
 
   TIME spent should be in format '[[Nh][ ]][Nm]'; or it can be calculated when
-  START time is be provided;
+  START time is be provided; it's assumed that time spent for a single task
+  cannot be greater than 1 day (8 hours).
 
   END time is optional, both should match 'H:M' format.
 
@@ -123,9 +124,9 @@ Usage: dzira log [OPTIONS] ISSUE
 
     "YYYY-mm-dd", "YYYY-mm-ddTHH:MM", "YYYY-mm-dd HH:MM".
 
-  Time is assumed from the START option, if present and date is not
-  specifying it.  The script will try to figure out local timezone and adjust
-  the log started time accordingly.
+  Time is calculated from the START option, if present, and date is
+  not specifying it.  The script will try to figure out local
+  timezone and adjust the log started time accordingly.
 
 Options:
   -t, --time TEXT        Time to spend in JIRA accepted format, e.g. '2h 10m'

@@ -193,6 +193,17 @@ class TestD:
     def test_call_returns_unpacked_values_of_selected_keys_or_none(self, input, expected):
         assert self.d(*input) == expected
 
+    @pytest.mark.parametrize(
+        "input,expected",
+        [
+            ((("x", 99), "c"), [99, 3]),
+            (("a", ("z", 42)), [1, 42]),
+            ((("b", 22), ("c", 88)), [2, 3])
+        ]
+    )
+    def test_call_accepts_tuples_with_fallback_values(self, input, expected):
+        assert self.d(*input) == expected
+
     def test_update_returns_self_with_key_of_given_value(self):
         assert self.d.update("a", 99) == D({**self.d, "a": 99})
         assert self.d.update("x", 77) == D({**self.d, "x": 77})
@@ -457,21 +468,19 @@ class TestAddWorklog:
         mock_worklog = Mock(raw={"timeSpent": "2h"}, issueId="123", id=321)
         mock_jira = Mock(add_worklog=Mock(return_value=mock_worklog))
 
-        result1 = add_worklog(mock_jira, "333", time="2h", date=sentinel.date)
+        result1 = add_worklog(mock_jira, "333", seconds=7200, date=sentinel.date)
         result2 = add_worklog(mock_jira, "333", seconds=60 * 60 * 2, comment="blah!")
 
         assert mock_jira.add_worklog.call_args_list == (
             [
                 call(
                     issue="333",
-                    timeSpent="2h",
-                    timeSpentSeconds=None,
+                    timeSpentSeconds=7200,
                     comment=None,
                     started=sentinel.date,
                 ),
                 call(
                     issue="333",
-                    timeSpent=None,
                     timeSpentSeconds=7200,
                     comment="blah!",
                     started=None,
@@ -536,10 +545,15 @@ class TestUpdateWorklogPublic:
 
 
 class TestCalculateSeconds:
-    def test_returns_the_unchanged_payload_if_no_start_time(self):
+    def test_returns_the_unchanged_payload_with_extra_key_seconds_if_no_start_time(self):
         input = D({"start": None, "end": None, "foo": "bar"})
 
-        assert calculate_seconds(input) == input
+        assert calculate_seconds(input) == input.update("seconds", None)
+
+    def test_copies_value_of_time_to_seconds_if_time_provided(self):
+        input = D({"time": 3600, "end": None, "foo": "bar"})
+
+        assert calculate_seconds(input) == input.update("seconds", 3600)
 
     @pytest.mark.parametrize(
         "start,end,expected",
@@ -882,18 +896,24 @@ class TestCorrectTimeFormats:
     @pytest.mark.parametrize(
         "input, expected",
         [
-            ("1h 1m", D(h="1h", m="1m")),
-            ("1h1m", D(h="1h", m="1m")),
-            ("1h 59m", D(h="1h", m="59m")),
-            ("1h59m", D(h="1h", m="59m")),
-            ("1h 0m", D()),
-            ("1h 60m", D()),
-            ("23h 1m", D(h="23h", m="1m")),
-            ("23h1m", D(h="23h", m="1m")),
+            # valid
+            ("1h 1m", D(h="1", m="1")),
+            ("1h1m", D(h="1", m="1")),
+            ("1h 59m", D(h="1", m="59")),
+            ("1h59m", D(h="1", m="59")),
+            ("3h1m", D(h="3", m="1")),
+            ("2h", D(h="2", m=None)),
+            ("42m", D(m="42")),
+            ("8h 59", D(h="8", m="59")),
+            # invalid
+            ("9h 1m", D()),
+            ("8 20", D()),
             ("24h 1m", D()),
             ("0h 1m", D()),
-            ("2h", D(h="2h", m=None)),
-            ("42m", D(h=None, m="42m")),
+            ("1h 0m", D()),
+            ("1h 60m", D()),
+            ("500m", D()),  # more than 8 h (exactly 8h 19m), invalid
+            ("9m", D()),  # less than 10 min, invalid
         ],
     )
     def test_evaluates_time_format(self, input, expected):
@@ -922,15 +942,15 @@ class TestValidateTime:
     def test_passes_when_time_is_none(self, mock_matches_time_re):
         result = validate_time(Mock(), Mock(), None)
 
-        assert result is None
+        assert result == 0
         mock_matches_time_re.assert_not_called()
 
     def test_passes_when_validator_passes(self, mock_matches_time_re):
-        mock_matches_time_re.return_value = D(h="2h")
+        mock_matches_time_re.return_value = D(h="2")
 
         result = validate_time(Mock(), Mock(), "2h")
 
-        assert result == "2h"
+        assert result == 7200
         mock_matches_time_re.assert_called_with("2h")
 
     def test_raises_otherwise(self, mock_matches_time_re):
@@ -940,7 +960,8 @@ class TestValidateTime:
             validate_time(Mock(), Mock(), "invalid")
 
         mock_matches_time_re.assert_called_with("invalid")
-        assert "time has" in str(exc_info)
+        assert "time cannot be greater than" in str(exc_info)
+        assert "has to be in format '[Nh][ N[m]]' or 'Nm'" in str(exc_info)
 
 
 @patch("src.dzira.dzira.is_valid_hour")
