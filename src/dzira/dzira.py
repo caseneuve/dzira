@@ -253,7 +253,7 @@ def _get_sprint_issues(jira: JIRA, sprint: Sprint) -> list:
 
 @spin_it("Getting issues")
 def get_issues(jira: JIRA, sprint: Sprint) -> Result:
-    issues = _get_sprint_issues(jira, sprint)
+    issues: list = _get_sprint_issues(jira, sprint)
     return Result(result=issues)
 
 
@@ -387,15 +387,18 @@ def process_sprint_out(sprint: Sprint) -> str:
     return f"{sprint.name} • id: {sprint.id} • {fmt(sprint.startDate)} -> {fmt(sprint.endDate)}"
 
 
-# TODO: we probably should check board always, as sprint_id may not be matching the team's board...
-def get_sprint_and_issues(jira: JIRA, payload: D) -> list:
+# TODO:
+# - we probably should check board always, as sprint_id may not be matching the team's board...
+# - catch errors
+def get_sprint_and_issues(jira: JIRA, payload: D) -> D:
     if not payload.has("sprint_id"):
         payload.update("board", get_board(jira, payload["JIRA_PROJECT_KEY"]).result)
     sprint = get_sprint(jira, payload).result
-    return get_issues(jira, sprint).result
+    issues = get_issues(jira, sprint).result
+    return D(sprint=sprint, issues=issues)
 
 
-def show_issues(issues: list, format: str) -> None:
+def show_issues(sprint_and_issues: D, format: str) -> None:
     if format in ("json", "csv"):
         global use_color; use_color = False
 
@@ -403,7 +406,7 @@ def show_issues(issues: list, format: str) -> None:
     state_clr = {"To Do": "^magenta", "In Progress": "^yellow", "Done": "^green"}
     clr = lambda s: c(state_clr.get(s, "^reset"), "^bold", s)
 
-    def estimate(i):
+    def _estimate(i):
         try:
             remining = i.fields.timetracking.remainingEstimate
             original = i.fields.timetracking.originalEstimate
@@ -411,28 +414,41 @@ def show_issues(issues: list, format: str) -> None:
         except Exception:
             return fmt(i.fields.timeestimate)
 
-    headers = ("key", "summary", "state", "spent", "estimated")
-    issues = [
-        (
+    headers = ["key", "summary", "state", "spent", "estimated"]
+    processed_issues = [
+        [
             c("^blue", i.key),
             i.fields.summary,
             clr(i.fields.status.name),
             fmt(i.fields.timespent),
-            estimate(i),
-        )
-        for i in reversed(sorted(issues, key=lambda i: i.fields.status.name))
+            _estimate(i),
+        ]
+        for i in reversed(sorted(sprint_and_issues["issues"], key=lambda i: i.fields.status.name))
     ]
 
     if format == "json":
-        print(json.dumps([dict(zip(headers, issue)) for issue in issues]))
+        sprint = sprint_and_issues["sprint"]
+        json_dict = {
+            "sprint": {
+                "name": sprint.name,
+                "id": sprint.id,
+                "start": sprint.startDate,
+                "end": sprint.endDate,
+            },
+            "issues": [dict(zip(headers, issue)) for issue in processed_issues]
+        }
+        print(json.dumps(json_dict))
     elif format == "csv":
+        headers.insert(0, "sprint_id")
+        sprint = sprint_and_issues["sprint"]
+        processed_issues = [[sprint.id] + i for i in processed_issues]
         writer = csv.DictWriter(sys.stdout, fieldnames=headers)
         writer.writeheader()
-        writer.writerows([dict(zip(headers, issue)) for issue in issues])
+        writer.writerows([dict(zip(headers, issue)) for issue in processed_issues])
     else:
         print(
             tabulate(
-                issues,
+                processed_issues,
                 headers=headers,
                 colalign=("right", "left", "left", "right", "right"),
                 maxcolwidths=[None, 35, None, None, None],
@@ -466,7 +482,7 @@ def validate_output_format(_, __, value):
     "-f", "--format",
     default=DEFAULT_OUTPUT_FORMAT,
     show_default=True,
-    help="Output format: supports tabulate formats + CSV and JSON",
+    help="Output format: supports TABULATE formats + CSV and JSON",
     callback=validate_output_format,
 )
 @click.help_option("-h", "--help")
@@ -477,12 +493,42 @@ def ls(ctx, state, sprint_id, format):
     'Current sprint' is understood as the first 'active' sprint found.
     To avoid ambiguity, use --sprint-id option.
 
-    Format can be one of supported tabulate formats or CSV, JSON.
+    Format can be one of supported TABULATE formats or CSV, JSON.
+
+    Examples of parsable formats:
+
+    \b
+    CSV format:
+      sprint_id,key,summary,state,spent,estimated
+      42,XY-250,New feature,To Do,,4h
+      42,XY-214,Upgrade foo to 9.99,In Progress,0:30:00,2d 7h 30m (3d)
+
+    \b
+    JSON format:
+      {
+        "sprint": {
+          "name": "Iteration 42",
+          "id": 42,
+          "start": "2024-01-01T08:00:00.000Z",
+          "end": "2024-01-14T16:00:00.000Z"
+        },
+        "issues": [
+          {
+            "key": "XY-250",
+            "summary": "New feature",
+            "state": "To Do",
+            "spent": null,
+            "estimated": 4h
+          }
+        ]
+      }
     """
     config = get_config(config=ctx.obj)
     jira = get_jira(config).result
-    issues = get_sprint_and_issues(jira, D(state=state, sprint_id=sprint_id, **config))
-    show_issues(issues, format=format)
+    sprint_and_issues: D = get_sprint_and_issues(
+        jira, D(state=state, sprint_id=sprint_id, **config)
+    )
+    show_issues(sprint_and_issues, format=format)
 
 
 ##################################################

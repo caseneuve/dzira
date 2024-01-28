@@ -86,7 +86,33 @@ Usage: dzira ls [OPTIONS]
   'Current sprint' is understood as the first 'active' sprint found. To avoid
   ambiguity, use --sprint-id option.
 
-  Format can be one of supported tabulate formats or CSV, JSON.
+  Format can be one of supported TABULATE formats or CSV, JSON.
+
+  Examples of parsable formats:
+
+  CSV format:
+    sprint_id,key,summary,state,spent,estimated
+    42,XY-250,New feature,To Do,,4h
+    42,XY-214,Upgrade foo to 9.99,In Progress,0:30:00,2d 7h 30m (3d)
+
+  JSON format:
+    {
+      "sprint": {
+        "name": "Iteration 42",
+        "id": 42,
+        "start": "2024-01-01T08:00:00.000Z",
+        "end": "2024-01-14T16:00:00.000Z"
+      },
+      "issues": [
+        {
+          "key": "XY-250",
+          "summary": "New feature",
+          "state": "To Do",
+          "spent": null,
+          "estimated": 4h
+        }
+      ]
+    }
 
 Options:
   -s, --state [active|closed]  Sprint state used for filtering  [default:
@@ -94,7 +120,7 @@ Options:
   -i, --sprint-id INTEGER      Sprint id to get unambiguous result, helpful
                                when multiple active sprints; has precedence
                                over --state
-  -f, --format TEXT            Output format: supports tabulate formats + CSV
+  -f, --format TEXT            Output format: supports TABULATE formats + CSV
                                and JSON  [default: simple_grid]
   -h, --help                   Show this message and exit.
 ```

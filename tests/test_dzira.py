@@ -108,6 +108,21 @@ def mock_set_spinner_use(mocker):
     return mocker.patch("src.dzira.dzira.set_spinner_use")
 
 
+@pytest.fixture
+def mock_get_sprint(mocker):
+    return mocker.patch("src.dzira.dzira.get_sprint")
+
+
+@pytest.fixture
+def mock_get_issues(mocker):
+    return mocker.patch("src.dzira.dzira.get_issues")
+
+
+@pytest.fixture
+def mock_get_board(mocker):
+    return mocker.patch("src.dzira.dzira.get_board")
+
+
 class TestC:
     @pytest.mark.parametrize(
         "test_input,expected",
@@ -617,10 +632,9 @@ class TestProcessSprintOut:
 
 
 class TestGetSprintAndIssues:
-    def test_gets_sprint_and_issues_using_sprint_id(self, mocker):
-        mock_get_board = mocker.patch("src.dzira.dzira.get_board")
-        mock_get_sprint = mocker.patch("src.dzira.dzira.get_sprint")
-        mock_get_issues = mocker.patch("src.dzira.dzira.get_issues")
+    def test_gets_sprint_and_issues_using_sprint_id(
+            self, mock_get_board, mock_get_sprint, mock_get_issues
+    ):
         mock_payload = D(sprint_id="foo")
 
         result = get_sprint_and_issues(sentinel.jira, mock_payload)
@@ -628,12 +642,14 @@ class TestGetSprintAndIssues:
         mock_get_sprint.assert_called_once_with(sentinel.jira, mock_payload)
         mock_get_issues.assert_called_once_with(sentinel.jira, mock_get_sprint.return_value.result)
         assert not mock_get_board.called
-        assert result == mock_get_issues.return_value.result
+        assert result == D(
+            sprint=mock_get_sprint.return_value.result,
+            issues= mock_get_issues.return_value.result
+        )
 
-    def test_gets_sprint_and_issues_using_board(self, mocker):
-        mock_get_board = mocker.patch("src.dzira.dzira.get_board")
-        mock_get_sprint = mocker.patch("src.dzira.dzira.get_sprint")
-        mock_get_issues = mocker.patch("src.dzira.dzira.get_issues")
+    def test_gets_sprint_and_issues_using_board(
+            self, mock_get_board, mock_get_sprint, mock_get_issues
+    ):
         mock_payload = D(JIRA_PROJECT_KEY=sentinel.key)
 
         result = get_sprint_and_issues(sentinel.jira, mock_payload)
@@ -643,12 +659,21 @@ class TestGetSprintAndIssues:
         )
         mock_get_issues.assert_called_once_with(sentinel.jira, mock_get_sprint.return_value.result)
         mock_get_board.assert_called_once_with(sentinel.jira, sentinel.key)
-        assert result == mock_get_issues.return_value.result
+        assert result == D(
+            sprint=mock_get_sprint.return_value.result,
+            issues=mock_get_issues.return_value.result
+        )
 
 
 class TestShowIssues:
     def setup(self):
         status = namedtuple("status", ["name"])
+        self.sprint = Mock(
+            name="Iteration 42",
+            id=42,
+            startDate=datetime.datetime.strptime("2024-01-01T08:00:00.000Z", "%Y-%m-%dT%H:%M:%S.%fZ"),
+            endDate=datetime.datetime.strptime("2024-01-14T18:00:00.000Z", "%Y-%m-%dT%H:%M:%S.%fZ")
+        )
         issue1 = Mock(
             key="XYZ-1",
             fields=Mock(
@@ -674,21 +699,16 @@ class TestShowIssues:
             )
         )
         self.issues = [issue1, issue2]
-        self.headers = ("key", "summary", "state", "spent", "estimated")
+        self.sprint_and_issues = D(sprint=self.sprint, issues=self.issues)
+        self.headers = ["key", "summary", "state", "spent", "estimated"]
         self.processed_issues = [
-            (
-                "XYZ-2", "description 2", "To Do",
-                str(datetime.timedelta(seconds=3600*2)), "3d"
-            ),
-            (
-                "XYZ-1", "description 1", "In Progress",
-                str(datetime.timedelta(seconds=3600*4)), "1d (2d)"
-            )
+            ["XYZ-2", "description 2", "To Do", str(datetime.timedelta(seconds=3600*2)), "3d"],
+            ["XYZ-1", "description 1", "In Progress", str(datetime.timedelta(seconds=3600*4)), "1d (2d)"]
         ]
         dzira.use_color = False
 
     def test_shows_data_extracted_from_jira_issues(self, mock_print, mock_tabulate):
-        show_issues(self.issues, format=sentinel.fmt)
+        show_issues(self.sprint_and_issues, format=sentinel.fmt)
 
         mock_tabulate.assert_called_once_with(
             self.processed_issues,
@@ -703,28 +723,36 @@ class TestShowIssues:
     def test_uses_tabulate_if_format_other_than_csv_or_json(
             self, fmt, mock_tabulate, mock_json, mock_csv
     ):
-        show_issues(self.issues, format=fmt)
+        show_issues(self.sprint_and_issues, format=fmt)
 
         mock_tabulate.assert_called()
         assert not mock_json.dumps.called
         assert not mock_csv.DictWriter.called
 
     def test_prints_json(self, mock_tabulate, mock_json, mock_csv):
-        show_issues(self.issues, format="json")
+        show_issues(self.sprint_and_issues, format="json")
 
-        mock_json.dumps.assert_called_once_with(
-            [dict(zip(self.headers, i)) for i in self.processed_issues]
-        )
+        expected_json_dict = {
+            "sprint": {
+                "name": self.sprint.name,
+                "id": self.sprint.id,
+                "start": self.sprint.startDate,
+                "end": self.sprint.endDate,
+            },
+            "issues": [dict(zip(self.headers, i)) for i in self.processed_issues]
+        }
+        mock_json.dumps.assert_called_once_with(expected_json_dict)
         assert not mock_tabulate.called
         assert not mock_csv.DictWriter.called
 
     def test_prints_csv(self, mock_tabulate, mock_json, mock_csv):
-        show_issues(self.issues, format="csv")
+        show_issues(self.sprint_and_issues, format="csv")
 
-        mock_csv.DictWriter.assert_called_once_with(sys.stdout, fieldnames=self.headers)
+        expected_headers = ["sprint_id"] + self.headers
+        mock_csv.DictWriter.assert_called_once_with(sys.stdout, fieldnames=expected_headers)
         mock_csv.DictWriter.return_value.writeheader.assert_called_once()
         mock_csv.DictWriter.return_value.writerows.assert_called_once_with(
-            [dict(zip(self.headers, i)) for i in self.processed_issues]
+            [dict(zip(expected_headers, [42] + i)) for i in self.processed_issues]
         )
         assert not mock_tabulate.called
         assert not mock_json.dumps.called
