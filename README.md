@@ -59,11 +59,11 @@ ones, use relevant options or environment variables, for example:
 
 This:
 
-`python dzira.py --board XYZ ...`
+`dzira --board XYZ ...`
 
 is equivalent to:
 
-`JIRA_BOARD=XYZ python dzira.py ...`
+`JIRA_BOARD=XYZ dzira ...`
 
 
 ## Creating an API jira token
