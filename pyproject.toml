@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dzira"
-version = "0.1.2"
+version = "0.2"
 dependencies = [
     "click >= 8.1",
     "jira",
@@ -34,5 +34,6 @@ classifiers = [
 dzira = "dzira.dzira:main"
 
 [project.urls]
-"Homepage" = "https://github.com/caseneuve/dzira"
-"Bug Tracker" = "https://github.com/caseneuve/dzira/issues"
+Homepage = "https://github.com/caseneuve/dzira"
+Issues = "https://github.com/caseneuve/dzira/issues"
+Changelog = "https://github.com/caseneuve/dzira/blob/master/CHANGELOG.md"
