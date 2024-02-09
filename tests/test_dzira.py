@@ -510,32 +510,31 @@ class TestAddWorklog:
 
 
 class TestGetWorklog:
-    def test_returns_worklog_if_found_by_jira_with_given_specs(self):
+    def test_is_decorated_correctly(self):
+        assert get_worklog.is_decorated_with_spin_it
+
+    @patch("src.dzira.dzira.datetime", Mock())
+    def test_returns_worklog(self):
         mock_jira = Mock(worklog=Mock())
 
         result = get_worklog(mock_jira, issue="123", worklog_id=999)
 
-        assert result == mock_jira.worklog.return_value
+        assert type(result) == Result
+        assert result.result == mock_jira.worklog.return_value
         mock_jira.worklog.assert_called_once_with(issue="123", id="999")
 
-    def test_raises_when_jira_could_not_find_worklog(self):
-        mock_jira = Mock(worklog=Mock(return_value=None))
-
-        with pytest.raises(Exception) as exc_info:
-            get_worklog(mock_jira, issue="123", worklog_id="999")
-
-        assert "could not find worklog 999 for issue '123'" in str(exc_info)
 
 
 class TestUpdateWorklogPrivate:
-    def test_updates_given_worklog_with_provided_fields(self):
+    def test_updates_given_worklog_with_provided_fields_and_returns_info_about_updated_fields(self):
         mock_worklog = Mock(update=Mock(), id="42")
+        fields = {"timeSpentSeconds": "3600", "comment": "blah!", "started": sentinel.date}
 
-        _update_worklog(mock_worklog, time="2h", comment="blah!", date=sentinel.date)
+        result = _update_worklog(mock_worklog, time="3600", comment="blah!", date=sentinel.date)
 
-        mock_worklog.update.assert_called_once_with(
-            fields={"timeSpent": "2h", "comment": "blah!", "started": sentinel.date}
-        )
+        mock_worklog.update.assert_called_once_with(fields=fields)
+        assert type(result) == D
+        assert result == D(fields)
 
     def test_raises_when_no_time_nor_comment_fields_provided(self):
         mock_worklog = Mock(update=Mock())
@@ -555,11 +554,11 @@ class TestUpdateWorklogPublic:
         mock_worklog = Mock(id="42")
         mock_private = mocker.patch("src.dzira.dzira._update_worklog")
 
-        result = update_worklog(mock_worklog, time="2h", comment="blah!", date=None)
+        result = update_worklog(mock_worklog, time="3600", comment="blah!", date=None)
 
-        mock_private.assert_called_once_with(mock_worklog, "2h", "blah!", None)
+        mock_private.assert_called_once_with(mock_worklog, "3600", "blah!", None)
         assert type(result) == Result
-        assert "42" in result.stdout
+        assert "updated" in result.stdout
 
 
 class TestCalculateSeconds:
@@ -1220,7 +1219,7 @@ class TestEstablishIssue:
         assert result == D(issue="1", **self.config)
 
 
-class TestLogAction:
+class TestPerformLogAction:
     def test_returns_update_worklog_if_worklog_id_provided(self, mocker):
         mock_get_worklog = mocker.patch("src.dzira.dzira.get_worklog")
         mock_update_worklog = mocker.patch("src.dzira.dzira.update_worklog")
@@ -1232,7 +1231,7 @@ class TestLogAction:
             sentinel.jira, issue=sentinel.issue, worklog_id=sentinel.worklog
         )
         mock_update_worklog.assert_called_once_with(
-            mock_get_worklog.return_value,
+            mock_get_worklog.return_value.result,
             **payload
         )
 

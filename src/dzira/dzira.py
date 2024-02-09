@@ -282,39 +282,45 @@ def add_worklog(
     )
 
 
-def get_worklog(jira: JIRA, issue: str, worklog_id: str | int, **_) -> Worklog:
-    if work_log := jira.worklog(issue=issue, id=str(worklog_id)):
-        return work_log
-    raise Exception(f"could not find worklog {worklog_id} for issue {issue!r}")
+@spin_it("Getting worklog")
+def get_worklog(jira: JIRA, issue: str, worklog_id: str | int, **_) -> Result:
+    work_log = jira.worklog(issue=issue, id=str(worklog_id))
+    created = datetime.strptime(
+        work_log.created, "%Y-%m-%dT%H:%M:%S.%f%z"
+    ).astimezone().strftime("%a, %b %d, %H:%M:%S")
+    author = work_log.author.displayName
+    return Result(result=work_log, stdout=f"{work_log.id}, created by {author} on {created}")
 
 
 def _update_worklog(
         worklog: Worklog, time: str | None, comment: str | None, date: datetime | None
-) -> None:
+) -> D:
     if not (time or comment):
         raise Exception(
             "at least one of <time> or <comment> fields needed to perform the update!"
         )
     fields = {
         k: v
-        for k, v in zip(["timeSpent", "comment", "started"], [time, comment, date])
+        for k, v in zip(["timeSpentSeconds", "comment", "started"], [time, comment, date])
         if v
     }
     worklog.update(fields=fields)
+    return D(fields)
 
 
 # TODO: we can't update worklog to change the issue
 # * add delete option to worklog !!!
-# * catch error when someone tries to update worklog in wrong ticket! => test it
 @spin_it("Updating worklog")
 def update_worklog(
         worklog: Worklog, time: str, comment: str, date: datetime | None = None, **_
 ) -> Result:
-    try:
-       _update_worklog(worklog, time, comment, date)
-    except JIRAError as exc:
-        raise Exception(str(exc))
-    return Result(stdout=f"{worklog.id} updated!")
+    info = _update_worklog(worklog, time, comment, date)
+    for k in info.copy():
+        if k == "timeSpentSeconds":
+            info.pop(k)
+            k = "timeSpent"
+        info.update(k, worklog.raw[k])
+    return Result(stdout=f"updated: {info}")
 
 
 def set_spinner_use(with_spinner: bool):
@@ -682,7 +688,7 @@ def establish_issue(jira: JIRA, payload: D) -> D:
 
 def perform_log_action(jira: JIRA, payload: D) -> None:
     if payload["worklog_id"] is not None:
-        worklog = get_worklog(jira, **payload)
+        worklog: Worklog = get_worklog(jira, **payload).result
         update_worklog(worklog, **payload)
     else:
         add_worklog(jira, **payload)
