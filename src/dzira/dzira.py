@@ -137,7 +137,8 @@ def spin_it(msg="", done="✓", fail="✗"):
                     return r
             except Exception as exc:
                 if type(exc) == JIRAError:
-                    error_msg = exc.response.json()["errors"]
+                    messages = exc.response.json().get("errorMessages", [])
+                    error_msg = " ".join(messages)
                 else:
                     error_msg = exc
                 print(
