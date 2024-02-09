@@ -245,6 +245,9 @@ class TestD:
     def test_repr(self):
         assert repr(D(a=1)) == "betterdict({'a': 1})"
 
+    def test_str(self):
+        assert str(D(a=1)) == "{'a': 1}"
+
     def test_exposes_keys_as_attributes_and_raises_attributeerror_for_missing_attr(self):
         assert self.d.a == 1
         assert self.d.b == 2

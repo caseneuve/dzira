@@ -92,6 +92,9 @@ class D(dict):
     def __repr__(self):
         return f"betterdict({dict(self)})"
 
+    def __str__(self):
+        return str(dict(self))
+
 
 @dataclass
 class Result:
