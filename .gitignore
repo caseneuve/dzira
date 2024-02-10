@@ -6,6 +6,8 @@
 .pypirc
 .pytest_cache
 __pycache__
+build/
+dist*/
 dist/
 pyrightconfig.json
 scratch/
