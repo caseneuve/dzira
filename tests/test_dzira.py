@@ -123,6 +123,11 @@ def mock_get_board(mocker):
     return mocker.patch("src.dzira.dzira.get_board")
 
 
+@pytest.fixture
+def mock_connect_to_jira(mocker):
+    return mocker.patch("src.dzira.dzira.connect_to_jira")
+
+
 class TestC:
     @pytest.mark.parametrize(
         "test_input,expected",
@@ -243,7 +248,7 @@ class TestGetConfigFromFile:
 @patch("src.dzira.dzira.get_config_from_file")
 class TestGetConfig:
     def test_uses_user_provided_values_entirely(self, mock_config_from_file):
-        override_conf = {"FOO": "123", "BAR": "abc", "BAZ": "zab"}
+        override_conf = D({"FOO": "123", "BAR": "abc", "BAZ": "zab"})
 
         result = get_config(override_conf)
 
@@ -255,19 +260,21 @@ class TestGetConfig:
 
         result = get_config({"BAR": "from override"})
 
-        assert result == {"FOO": "321", "BAR": "from override", "BAZ": "999"}
+        assert result == D({"FOO": "321", "BAR": "from override", "BAZ": "999"})
 
     def test_uses_provided_file_instead_of_default_ones(self, mock_config_from_file):
         mock_config_from_file.return_value = {"FOO": "123", "BAR": "abc", "BAZ": "zab"}
 
         result = get_config({"file": "/path/to/file"})
 
-        assert result == {
-            "FOO": "123",
-            "BAR": "abc",
-            "BAZ": "zab",
-            "file": "/path/to/file",
-        }
+        assert result == D(
+            {
+                "FOO": "123",
+                "BAR": "abc",
+                "BAZ": "zab",
+                "file": "/path/to/file",
+            }
+        )
         mock_config_from_file.assert_called_once_with("/path/to/file")
 
     def test_raises_when_required_values_not_found_in_compiled_config(
@@ -281,15 +288,24 @@ class TestGetConfig:
 
 
 class TestGetJira:
-    def test_jira_is_instantiated_with_provided_config_values(self, config, mocker):
-        mock_get_jira = mocker.patch("src.dzira.dzira.JIRA")
+    config = D({"JIRA_SERVER": "server", "JIRA_EMAIL": "email", "JIRA_TOKEN": "token"})
 
-        get_jira(config)
+    def test_is_decorated_correctly(self):
+        assert get_jira.is_decorated_with_spin_it
 
-        mock_get_jira.assert_called_once_with(
-            server=f"https://{config['JIRA_SERVER']}",
-            basic_auth=(config["JIRA_EMAIL"], config["JIRA_TOKEN"]),
-        )
+    def test_returns_result(self, mock_connect_to_jira):
+        result = get_jira(self.config)
+
+        assert type(result) == Result
+        assert result.result == mock_connect_to_jira.return_value
+        assert "server" in result.stdout
+
+    def test_jira_connection_is_established_using_provided_config(
+            self, mock_connect_to_jira
+    ):
+        get_jira(self.config)
+
+        mock_connect_to_jira.assert_called_once_with("server", "email", "token")
 
 
 class TestGetBoard:

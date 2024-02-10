@@ -22,7 +22,8 @@ from jira.exceptions import JIRAError
 from jira.resources import Board, Sprint, User, Worklog
 from tabulate import tabulate, tabulate_formats
 
-from src.dzira.betterdict import D
+from dzira.api import connect_to_jira
+from dzira.betterdict import D
 
 
 CONFIG_DIR_NAME = "dzira"
@@ -130,7 +131,7 @@ def get_config_from_file(config_file: str | Path | None = None) -> dict:
     return dotenv_values(config_file)
 
 
-def get_config(config: dict = {}) -> dict:
+def get_config(config: dict = {}) -> D:
     for cfg_fn in (
         lambda: get_config_from_file(config.get("file")),
         lambda: (_ for _ in ()).throw(
@@ -144,7 +145,7 @@ def get_config(config: dict = {}) -> dict:
             break
         config = {**cfg_fn(), **config}
 
-    return config
+    return D(config)
 
 
 ##################################################
@@ -153,12 +154,10 @@ def get_config(config: dict = {}) -> dict:
 
 
 @spin_it("Getting client")
-def get_jira(config: dict) -> Result:
-    jira = JIRA(
-        server=f"https://{config['JIRA_SERVER']}",
-        basic_auth=(config["JIRA_EMAIL"], config["JIRA_TOKEN"]),
-    )
-    msg = f"connecting to {config['JIRA_SERVER']}"
+def get_jira(config: D) -> Result:
+    server, email, token = config("JIRA_SERVER", "JIRA_EMAIL", "JIRA_TOKEN")
+    msg = f"connecting to {server}"
+    jira = connect_to_jira(server, email, token)
     return Result(stdout=msg, result=jira)
 
 
