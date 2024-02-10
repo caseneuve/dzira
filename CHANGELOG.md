@@ -1,7 +1,14 @@
 # Changelog: `dzira`
 
+## [0.2.1](https://github.com/caseneuve/dzira/releases/tag/v0.2) (pre)
 
-## [0.2](https://github.com/caseneuve/dzira/releases/tag/v0.2) (2024-02-05)
+### Fixed
+
+* Updating worklog uses seconds as expected ([#22](https://github.com/caseneuve/dzira/issues/22))
+* Properly catches error when a worklog is not found ([#22](https://github.com/caseneuve/dzira/issues/22))
+
+
+## [0.2.0](https://github.com/caseneuve/dzira/releases/tag/v0.2) (2024-02-05)
 
 ### Added
 
@@ -44,4 +51,4 @@
 - `report` command decorator for consistency
 
 
-## [0.1](https://github.com/caseneuve/dzira/releases/tag/v0.1) (2023-12-15)
+## [0.1.0](https://github.com/caseneuve/dzira/releases/tag/v0.1) (2023-12-15)
