@@ -26,6 +26,7 @@ from src.dzira.dzira import (
     c,
     calculate_seconds,
     cli,
+    colors,
     establish_issue,
     get_board,
     get_config,
@@ -39,7 +40,6 @@ from src.dzira.dzira import (
     get_user,
     get_user_worklogs_from_date,
     get_worklog,
-    hide_cursor,
     is_valid_hour,
     log,
     ls,
@@ -49,9 +49,11 @@ from src.dzira.dzira import (
     process_sprint_out,
     report,
     sanitize_params,
-    show_cursor,
+    set_color_use,
+    set_spinner_use,
     show_issues,
     show_report,
+    spinner,
     update_worklog,
     validate_date,
     validate_hour,
@@ -145,85 +147,12 @@ def mock_get_sprint_by_id(mocker):
     return mocker.patch("src.dzira.dzira.api.get_sprint_by_id")
 
 
-
 @pytest.fixture
 def mock_get_sprints_by_board(mocker):
     return mocker.patch(
         "src.dzira.dzira.api.get_sprints_by_board",
         Mock(return_value=[sentinel.sprint1])
     )
-
-
-
-class TestC:
-    @pytest.mark.parametrize(
-        "test_input,expected",
-        [
-            ("^bold", "\033[1m\033[0m"),
-            ("^red", "\033[91m\033[0m"),
-            ("^green", "\033[92m\033[0m"),
-            ("^yellow", "\033[93m\033[0m"),
-            ("^blue", "\033[94m\033[0m"),
-            ("^magenta", "\033[95m\033[0m"),
-            ("^cyan", "\033[96m\033[0m"),
-         ]
-    )
-    def test_uses_right_codes_for_given_colors(self, test_input, expected):
-        assert c(test_input) == expected
-
-    @pytest.mark.parametrize(
-        "test_input,expected",
-        [
-            (("^red", "text"), "\033[91mtext\033[0m"),
-            (("red",), "red\033[0m"),
-            (
-                ("^bold", "one ", "^reset", "^green", "two"),
-                "\033[1mone \033[0m\033[92mtwo\033[0m"
-            ),
-         ]
-    )
-    def test_is_variadic(self, test_input, expected):
-        assert c(*test_input) == expected
-
-    def test_returns_string_without_color_tags_when_use_color_is_false(self, mocker):
-        mocker.patch("src.dzira.dzira.use_color", False)
-
-        assert c("^bold", "this ", "^red", "text ", "^blue", "does not have colors", "^reset") == (
-            "this text does not have colors"
-        )
-
-
-class TestCursorHelpers:
-    def test_hides_cursor(self, mock_print):
-        hide_cursor()
-
-        mock_print.assert_called_once_with("\033[?25l", end="", flush=True, file=sys.stderr)
-
-    def test_shows_cursor(self, mock_print):
-        show_cursor()
-
-        mock_print.assert_called_once_with("\033[?25h", end="", flush=True, file=sys.stderr)
-
-
-class TestResult:
-    def test_instantiates_with_default_values_for_result_stdout_and_data(self):
-        result = Result()
-
-        assert result.result is None
-        assert result.stdout == ""
-        assert result.data == D()
-
-    def test_instantiates_with_given_values(self):
-        result = Result(result=sentinel.result, stdout="foo")
-
-        assert result.result == sentinel.result
-        assert result.stdout == "foo"
-
-
-class TestSpinIt:
-    @pytest.mark.xfail
-    def test_todo(self):
-        assert False, "Need to write tests"
 
 
 class TestGetConfigFromFile:
@@ -624,7 +553,7 @@ class TestShowIssues:
             ["XYZ-2", "description 2", "To Do", str(datetime.timedelta(seconds=3600*2)), "3d"],
             ["XYZ-1", "description 1", "In Progress", str(datetime.timedelta(seconds=3600*4)), "1d (2d)"]
         ]
-        dzira.use_color = False
+        colors.use = False
 
     def test_shows_data_extracted_from_jira_issues(self, mock_print, mock_tabulate):
         show_issues(self.sprint_and_issues, format=sentinel.fmt)
@@ -682,12 +611,14 @@ class TestSetColorUse:
         "input,isatty,expected",
         [(True, True, True), (False, True, False), (True, False, False)]
     )
-    def test_sets_color_option_using_user_input_and_interactivity_state(self, input, isatty, expected):
-        dzira.sys.stdin.isatty = lambda: isatty
+    def test_sets_color_option_using_user_input_and_interactivity_state(
+            self, mocker, input, isatty, expected
+    ):
+        mocker.patch("src.dzira.dzira.sys.stdin.isatty", Mock(return_value=isatty))
 
-        dzira.set_color_use(input)
+        set_color_use(input)
 
-        assert dzira.use_color is expected
+        assert colors.use is expected
 
 
 class TestSetSpinnerUse:
@@ -696,13 +627,13 @@ class TestSetSpinnerUse:
         [(True, True, True), (False, True, False), (True, False, False)]
     )
     def test_sets_spinner_option_using_user_input_and_interactivity_state(
-            self, input, isatty, expected
+            self, mocker, input, isatty, expected
     ):
-        dzira.sys.stdin.isatty = lambda: isatty
+        mocker.patch("src.dzira.dzira.sys.stdin.isatty", Mock(return_value=isatty))
 
-        dzira.set_spinner_use(input)
+        set_spinner_use(input)
 
-        assert dzira.use_spinner is expected
+        assert spinner.use is expected
 
 
 class CliTest:

@@ -1,118 +1,48 @@
 from __future__ import annotations
 
-import concurrent.futures
 import csv
 import json
 import os
 import re
 import subprocess
 import sys
-import time
-from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
-from functools import wraps
-from itertools import cycle
 from pathlib import Path
-from typing import Any
 
 import click
 from dotenv import dotenv_values
 from jira import JIRA
 from jira.exceptions import JIRAError
 from jira.resources import Board, Sprint, User, Worklog
-from tabulate import tabulate, tabulate_formats
+from tabulate import tabulate
 
 import dzira.api as api
 from dzira.betterdict import D
+from dzira.cli.output import (
+    Colors,
+    Result,
+    Spinner,
+    hide_cursor,
+    show_cursor,
+)
+from dzira.cli.config import (
+    CONFIG_DIR_NAME,
+    DEFAULT_OUTPUT_FORMAT,
+    DOTFILE,
+    REQUIRED_KEYS,
+    VALID_OUTPUT_FORMATS,
+)
 
 
-CONFIG_DIR_NAME = "dzira"
-DOTFILE = f".{CONFIG_DIR_NAME}"
-REQUIRED_KEYS = "JIRA_SERVER", "JIRA_EMAIL", "JIRA_TOKEN", "JIRA_PROJECT_KEY"
-
-VALID_OUTPUT_FORMATS = sorted(tabulate_formats + ["json", "csv"])
-DEFAULT_OUTPUT_FORMAT = "simple_grid"
-
-use_spinner = True
-use_color = True
+colors = Colors()
+c = colors.c
+spinner = Spinner(c)
+spin = spinner.run
 
 
-def c(*args):
-    C = {k: f"\033[{v}m" for k, v in (("^reset", 0),
-                                      ("^bold", 1),
-                                      ("^red", 91),
-                                      ("^green", 92),
-                                      ("^yellow", 93),
-                                      ("^blue", 94),
-                                      ("^magenta", 95),
-                                      ("^cyan", 96))}
-    if use_color:
-        return "".join([C.get(a, a) for a in args]) + C["^reset"]
-    return "".join([a for a in args if a not in C])
-
-
-def hide_cursor():
-    print("\033[?25l", end="", flush=True, file=sys.stderr)
-
-
-def show_cursor():
-    print("\033[?25h", end="", flush=True, file=sys.stderr)
-
-
-@dataclass
-class Result:
-    result: Any = None
-    stdout: str = ""
-    data: D = field(default_factory=D)
-
-
-def spin_it(msg="", done="✓", fail="✗"):
-    spinner = cycle("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
-    separator = "  "
-    connector = ":\t"
-
-    def decorator(func):
-        func.is_decorated_with_spin_it = True
-
-        @wraps(func)
-        def wrapper(*args, **kwargs):
-            if not use_spinner:
-                return func(*args, **kwargs)
-            try:
-                with concurrent.futures.ThreadPoolExecutor() as executor:
-                    future = executor.submit(func, *args, **kwargs)
-
-                    while future.running():
-                        print(
-                            c("\r", "^magenta", next(spinner), separator, msg),
-                            end="",
-                            flush=True,
-                            file=sys.stderr
-                        )
-                        time.sleep(0.1)
-
-                    r: Result = future.result()
-                    print(
-                        c("\r", "^green", done, separator, msg, "^reset", connector, r.stdout),
-                        flush=True,
-                        file=sys.stderr
-                    )
-                    return r
-            except Exception as exc:
-                if type(exc) == JIRAError:
-                    messages = exc.response.json().get("errorMessages", [])
-                    error_msg = " ".join(messages)
-                else:
-                    error_msg = exc
-                print(
-                    c("\r", "^red", fail, separator, msg),
-                    end=":\n",
-                    flush=True,
-                    file=sys.stderr
-                )
-                raise Exception(error_msg)
-        return wrapper
-    return decorator
+##################################################
+#  config helpers
+##################################################
 
 
 def get_config_from_file(config_file: str | Path | None = None) -> dict:
@@ -153,7 +83,7 @@ def get_config(config: dict = {}) -> D:
 ##################################################
 
 
-@spin_it("Getting client")
+@spin("Getting client")
 def get_jira(config: D) -> Result:
     server, email, token = config("JIRA_SERVER", "JIRA_EMAIL", "JIRA_TOKEN")
     msg = f"connecting to {server}"
@@ -161,7 +91,7 @@ def get_jira(config: D) -> Result:
     return Result(stdout=msg, result=jira)
 
 
-@spin_it("Getting board")
+@spin("Getting board")
 def get_board(jira: JIRA, key: str) -> Result:
     board: Board = api.get_board_by_key(jira, key)
     return Result(
@@ -175,7 +105,7 @@ def process_sprint_out(sprint: Sprint) -> str:
     return f"{sprint.name} • id: {sprint.id} • {fmt(sprint.startDate)} -> {fmt(sprint.endDate)}"
 
 
-@spin_it("Getting sprint")
+@spin("Getting sprint")
 def get_sprint(jira: JIRA, payload: D) -> Result:
     sprint_id, board, state = payload("sprint_id", "board", "state")
     try:
@@ -185,15 +115,15 @@ def get_sprint(jira: JIRA, payload: D) -> Result:
         else:
             sprints = api.get_sprints_by_board(jira, board, state)
             if len(sprints) > 1:
-                warning = f" (showing first sprint matching {state!r})"
-            sprint = sprints[0]
+                warning = f" (showing most recent sprint matching {state!r})"
+            sprint = sprints[-1]
     except:
         raise Exception("Could not find sprint matching given criteria")
     out = process_sprint_out(sprint)
     return Result(result=sprint, stdout=f"{out}{warning}")
 
 
-@spin_it("Adding worklog")
+@spin("Adding worklog")
 def add_worklog(
         jira: JIRA,
         issue: str,
@@ -211,7 +141,7 @@ def add_worklog(
     )
 
 
-@spin_it("Getting worklog")
+@spin("Getting worklog")
 def get_worklog(jira: JIRA, issue: str, worklog_id: str | int, **_) -> Result:
     work_log: Worklog = api.get_worklog(jira, issue=issue, worklog_id=str(worklog_id))
     created = datetime.strptime(
@@ -239,7 +169,7 @@ def _update_worklog(
 
 # TODO: we can't update worklog to change the issue
 # * add delete option to worklog !!!
-@spin_it("Updating worklog")
+@spin("Updating worklog")
 def update_worklog(
         worklog: Worklog, time: str, comment: str, date: datetime | None = None, **_
 ) -> Result:
@@ -256,14 +186,13 @@ def update_worklog(
 #  CLI wrapper
 ##################################################
 
+
 def set_spinner_use(with_spinner: bool):
-    global use_spinner;
-    use_spinner = with_spinner and sys.stdin.isatty()
+    spinner.use = with_spinner and sys.stdin.isatty()
 
 
 def set_color_use(with_color: bool):
-    global use_color
-    use_color = with_color and sys.stdin.isatty()
+    colors.use = with_color and sys.stdin.isatty()
 
 
 @click.group()
@@ -320,14 +249,11 @@ def cli(ctx, file, key, token, email, server, spin, color):
 ##################################################
 
 
-@spin_it("Getting issues")
+@spin("Getting issues")
 def get_issues(jira: JIRA, sprint: Sprint) -> Result:
     return Result(result=api.get_sprint_issues(jira, sprint))
 
 
-# TODO:
-# - we probably should check board always, as sprint_id may not be matching the team's board...
-# - catch errors
 def get_sprint_and_issues(jira: JIRA, payload: D) -> D:
     if not payload.has("sprint_id"):
         payload.update("board", get_board(jira, payload["JIRA_PROJECT_KEY"]).result)
@@ -338,7 +264,7 @@ def get_sprint_and_issues(jira: JIRA, payload: D) -> D:
 
 def show_issues(sprint_and_issues: D, format: str) -> None:
     if format in ("json", "csv"):
-        global use_color; use_color = False
+        colors.use = False
 
     fmt = lambda t: str(timedelta(seconds=t)) if t else None
     state_clr = {"To Do": "^magenta", "In Progress": "^yellow", "Done": "^green"}
@@ -704,7 +630,7 @@ def log(ctx, **_):
 ##################################################
 
 
-@spin_it("Getting user")
+@spin("Getting user")
 def get_user(jira: JIRA, config: dict) -> Result:
     try:
         users = jira.search_users(query=config["JIRA_EMAIL"])
@@ -718,7 +644,7 @@ def get_user(jira: JIRA, config: dict) -> Result:
     return Result(result=users[0], stdout=users[0].displayName)
 
 
-@spin_it("Getting issues")
+@spin("Getting issues")
 def get_issues_with_work_logged_on_date(jira: JIRA, report_date: datetime | None) -> Result:
     if report_date is not None:
         query = f"worklogDate = {report_date:%Y-%m-%d}"
@@ -740,7 +666,7 @@ def get_issues_with_work_logged_on_date(jira: JIRA, report_date: datetime | None
     )
 
 
-@spin_it("Getting worklogs")
+@spin("Getting worklogs")
 def get_user_worklogs_from_date(jira: JIRA, user: User, issues: Result) -> Result:
     worklogs = D(counter=0)
 
