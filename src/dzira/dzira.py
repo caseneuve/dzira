@@ -2,15 +2,12 @@ from __future__ import annotations
 
 import csv
 import json
-import os
 import re
 import subprocess
 import sys
 from datetime import date, datetime, timedelta
-from pathlib import Path
 
 import click
-from dotenv import dotenv_values
 from jira import JIRA
 from jira.exceptions import JIRAError
 from jira.resources import Board, Sprint, User, Worklog
@@ -26,11 +23,9 @@ from dzira.cli.output import (
     show_cursor,
 )
 from dzira.cli.config import (
-    CONFIG_DIR_NAME,
     DEFAULT_OUTPUT_FORMAT,
-    DOTFILE,
-    REQUIRED_KEYS,
     VALID_OUTPUT_FORMATS,
+    get_config,
 )
 
 
@@ -38,44 +33,6 @@ colors = Colors()
 c = colors.c
 spinner = Spinner(c)
 spin = spinner.run
-
-
-##################################################
-#  config helpers
-##################################################
-
-
-def get_config_from_file(config_file: str | Path | None = None) -> dict:
-    if config_file is None:
-        config_file_dir = os.environ.get("XDG_CONFIG_HOME", os.environ["HOME"])
-        for path in (
-                os.path.join(config_file_dir, CONFIG_DIR_NAME, "env"),
-                os.path.join(config_file_dir, DOTFILE),
-                os.path.join(os.environ["HOME"], ".config", CONFIG_DIR_NAME, "env"),
-                os.path.join(os.environ["HOME"], ".config", DOTFILE),
-        ):
-            if os.path.isfile(path):
-                config_file = path
-                break
-
-    return dotenv_values(config_file)
-
-
-def get_config(config: dict = {}) -> D:
-    for cfg_fn in (
-        lambda: get_config_from_file(config.get("file")),
-        lambda: (_ for _ in ()).throw(
-            Exception(
-                "could not find required config values: "
-                f"{', '.join(sorted(set(REQUIRED_KEYS).difference(set(config))))}"
-            )
-        ),
-    ):
-        if set(REQUIRED_KEYS).issubset(config.keys()):
-            break
-        config = {**cfg_fn(), **config}
-
-    return D(config)
 
 
 ##################################################
