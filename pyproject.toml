@@ -31,7 +31,7 @@ classifiers = [
 ]
 
 [project.scripts]
-dzira = "dzira.dzira:main"
+dzira = "dzira:main"
 
 [project.urls]
 Homepage = "https://github.com/caseneuve/dzira"
