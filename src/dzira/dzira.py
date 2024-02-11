@@ -193,19 +193,6 @@ def get_sprint(jira: JIRA, payload: D) -> Result:
     return Result(result=sprint, stdout=f"{out}{warning}")
 
 
-
-def _get_sprint_issues(jira: JIRA, sprint: Sprint) -> list:
-    if issues := jira.search_issues(jql_str=f"Sprint = {sprint.name!r}"):
-        return list(issues)
-    raise Exception(f"could not find any issues for sprint {sprint.name!r}")
-
-
-@spin_it("Getting issues")
-def get_issues(jira: JIRA, sprint: Sprint) -> Result:
-    issues: list = _get_sprint_issues(jira, sprint)
-    return Result(result=issues)
-
-
 # TODO: catch errors and properly process them in Result (stderr?) // update tests for new param
 @spin_it("Adding worklog")
 def add_worklog(
@@ -216,9 +203,11 @@ def add_worklog(
         date: datetime | None = None,
         **_
 ) -> Result:
+    # EXTRACT >>>
     work_log = jira.add_worklog(
         issue=issue, timeSpentSeconds=seconds, comment=comment, started=date
     )
+    # <<< EXTRACT
     return Result(
         stdout=(
             f"spent {work_log.raw['timeSpent']} in {issue} "
@@ -268,6 +257,10 @@ def update_worklog(
     return Result(stdout=f"updated: {info}")
 
 
+##################################################
+#  CLI wrapper
+##################################################
+
 def set_spinner_use(with_spinner: bool):
     global use_spinner;
     use_spinner = with_spinner and sys.stdin.isatty()
@@ -276,11 +269,6 @@ def set_spinner_use(with_spinner: bool):
 def set_color_use(with_color: bool):
     global use_color
     use_color = with_color and sys.stdin.isatty()
-
-
-##################################################
-#  CLI wrapper
-##################################################
 
 
 @click.group()
@@ -335,6 +323,11 @@ def cli(ctx, file, key, token, email, server, spin, color):
 ##################################################
 #  LS command
 ##################################################
+
+
+@spin_it("Getting issues")
+def get_issues(jira: JIRA, sprint: Sprint) -> Result:
+    return Result(result=api.get_sprint_issues(jira, sprint))
 
 
 # TODO:
@@ -417,7 +410,7 @@ def validate_output_format(_, __, value):
 @click.pass_context
 @click.option(
     "-s", "--state",
-    type=click.Choice(["active", "closed"]), default="active", show_default=True,
+    type=click.Choice(["active", "closed", "future"]), default="active", show_default=True,
     help="Sprint state used for filtering",
 )
 @click.option(

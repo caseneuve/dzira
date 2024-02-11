@@ -5,8 +5,11 @@ import pytest
 from src.dzira.api import (
     connect_to_jira,
     get_board_by_key,
+    get_closed_sprints_issues,
+    get_current_sprint_issues,
+    get_future_sprint_issues,
+    get_sprint_issues,
     get_sprints_by_board,
-
 )
 
 
@@ -20,6 +23,11 @@ def mock_jira(mocker):
 @pytest.fixture
 def mock_board():
     return Mock(id=sentinel.board_id)
+
+
+@pytest.fixture
+def mock_sprint():
+    return Mock(id=sentinel.id, name="SprintName")
 
 
 # tests
@@ -57,3 +65,39 @@ def test_get_sprints_by_board(mock_jira, mock_board):
 
     mock_jira.sprints.assert_called_once_with(board_id=mock_board.id, state=sentinel.state)
     assert result == mock_jira.sprints.return_value
+
+
+def test_get_sprint_issues(mock_jira, mock_sprint):
+    result = get_sprint_issues(mock_jira, mock_sprint)
+
+    assert result == list(mock_jira.search_issues.return_value)
+    mock_jira.search_issues.assert_called_once_with(
+        jql_str=f"Sprint = {mock_sprint.id}"
+    )
+
+
+def test_get_current_sprint_issues(mock_jira):
+    result = get_current_sprint_issues(mock_jira, "KEY")
+
+    assert result == list(mock_jira.search_isseus.return_value)
+    mock_jira.search_issues.assert_called_once_with(
+        jql_str=f"project = 'KEY' AND sprint in openSprints()"
+    )
+
+
+def test_get_future_sprint_issues(mock_jira):
+    result = get_future_sprint_issues(mock_jira, "KEY")
+
+    assert result == list(mock_jira.search_isseus.return_value)
+    mock_jira.search_issues.assert_called_once_with(
+        jql_str="project = 'KEY' AND sprint in futureSprints()"
+    )
+
+
+def test_get_closed_sprints_issues(mock_jira):
+    result = get_closed_sprints_issues(mock_jira,"KEY")
+
+    assert result == list(mock_jira.search_isseus.return_value)
+    mock_jira.search_issues.assert_called_once_with(
+        jql_str="project = 'KEY' AND sprint in closedSprints()"
+    )

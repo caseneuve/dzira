@@ -384,18 +384,18 @@ class TestGetSprint:
         assert "Could not find sprint matching given criteria" in str(exc)
 
 
-class TestGetIssuesPublic:
+class TestGetIssues:
     def test_is_decorated_correctly(self):
         assert get_issues.is_decorated_with_spin_it
 
     def test_calls_private_function_and_wraps_the_result(self, mocker):
-        mock_private = mocker.patch("src.dzira.dzira._get_sprint_issues")
+        mock_api = mocker.patch("src.dzira.dzira.api.get_sprint_issues")
 
         result = get_issues(sentinel.jira, sentinel.sprint)
 
-        mock_private.assert_called_once_with(sentinel.jira, sentinel.sprint)
+        mock_api.assert_called_once_with(sentinel.jira, sentinel.sprint)
         assert type(result) == Result
-        assert result.result == mock_private.return_value
+        assert result.result == mock_api.return_value
 
 
 class TestAddWorklog:
@@ -793,7 +793,8 @@ class TestLs(CliTest):
         )
         mock_get_config.assert_called_once_with(config=mock_config)
 
-    def test_uses_state_option(self, mocker):
+    @pytest.mark.parametrize("state", ["active", "closed", "future"])
+    def test_uses_state_option(self, mocker, state):
         mock_get_config = mocker.patch("src.dzira.dzira.get_config")
         mocker.patch("src.dzira.dzira.get_jira", Mock(return_value=Mock(result=sentinel.jira)))
         mock_get_sprint_and_issues = mocker.patch(
@@ -802,12 +803,12 @@ class TestLs(CliTest):
         mock_get_sprint_and_issues.return_value = sentinel.issues
         mock_show_issues = mocker.patch("src.dzira.dzira.show_issues")
 
-        result = self.runner.invoke(cli, ["ls", "--state", "closed"])
+        result = self.runner.invoke(cli, ["ls", "--state", state])
 
         assert result.exit_code == 0
         mock_show_issues.assert_called_once_with(sentinel.issues, format=DEFAULT_OUTPUT_FORMAT)
         mock_get_sprint_and_issues.assert_called_once_with(
-            sentinel.jira, D(state="closed", sprint_id=None, **mock_get_config.return_value)
+            sentinel.jira, D(state=state, sprint_id=None, **mock_get_config.return_value)
         )
 
     def test_uses_sprint_id_option(self, mocker):

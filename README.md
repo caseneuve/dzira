@@ -115,7 +115,8 @@ Usage: dzira ls [OPTIONS]
     }
 
 Options:
-  -s, --state [active|closed]  Sprint state used for filtering  [default:
+  -s, --state [active|closed|future]
+                               Sprint state used for filtering  [default:
                                active]
   -i, --sprint-id INTEGER      Sprint id to get unambiguous result, helpful
                                when multiple active sprints; has precedence
