@@ -13,16 +13,16 @@ from jira.exceptions import JIRAError
 from jira.resources import Board, Sprint, User, Worklog
 from tabulate import tabulate
 
-import dzira.api as api
-from dzira.betterdict import D
-from dzira.cli.output import (
+from .. import api
+from ..betterdict import D
+from ..cli.output import (
     Colors,
     Result,
     Spinner,
     hide_cursor,
     show_cursor,
 )
-from dzira.cli.config import (
+from .config import (
     DEFAULT_OUTPUT_FORMAT,
     VALID_OUTPUT_FORMATS,
     get_config,
