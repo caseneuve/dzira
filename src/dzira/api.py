@@ -1,5 +1,7 @@
+from datetime import datetime
+
 from jira import JIRA
-from jira.resources import Board, Sprint
+from jira.resources import Board, Sprint, Worklog
 
 
 def connect_to_jira(server: str, email: str, token: str) -> JIRA:
@@ -44,3 +46,21 @@ def get_closed_sprints_issues(jira: JIRA, project_key: str) -> list:
     return list(
         jira.search_issues(jql_str=f"project = {project_key!r} AND sprint in closedSprints()")
     )
+
+
+def log_work(
+        jira: JIRA,
+        issue: str,
+        seconds: int,
+        comment: str | None = None,
+        date: datetime | None = None
+) -> Worklog:
+    if seconds < (5 * 60):
+        raise ValueError(f"{seconds} seconds is too low to log")
+    return jira.add_worklog(
+        issue=issue, timeSpentSeconds=seconds, comment=comment, started=date
+    )
+
+
+def get_worklog(jira: JIRA, issue: str, worklog_id: str) -> Worklog:
+    return jira.worklog(issue=issue, id=worklog_id)

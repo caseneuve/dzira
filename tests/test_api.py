@@ -10,6 +10,8 @@ from src.dzira.api import (
     get_future_sprint_issues,
     get_sprint_issues,
     get_sprints_by_board,
+    get_worklog,
+    log_work,
 )
 
 
@@ -101,3 +103,31 @@ def test_get_closed_sprints_issues(mock_jira):
     mock_jira.search_issues.assert_called_once_with(
         jql_str="project = 'KEY' AND sprint in closedSprints()"
     )
+
+
+def test_log_work_happy_path(mock_jira):
+    result = log_work(
+        mock_jira, sentinel.issue, 3600, comment=sentinel.comment, date=sentinel.date
+    )
+
+    assert result == mock_jira.add_worklog.return_value
+    mock_jira.add_worklog.assert_called_once_with(
+        issue=sentinel.issue,
+        timeSpentSeconds=3600,
+        comment=sentinel.comment,
+        started=sentinel.date
+    )
+
+
+def test_log_work_raises_when_wrong_number_of_seconds(mock_jira):
+    with pytest.raises(ValueError) as exc:
+        log_work(mock_jira, sentinel.issue, 30, comment=sentinel.comment, date=sentinel.date)
+
+    assert "30 seconds is too low to log" in str(exc)
+
+
+def test_get_worklog(mock_jira):
+    result = get_worklog(mock_jira, sentinel.issue, sentinel.worklog_id)
+
+    assert result == mock_jira.worklog.return_value
+    mock_jira.worklog.assert_called_once_with(issue=sentinel.issue, id=sentinel.worklog_id)

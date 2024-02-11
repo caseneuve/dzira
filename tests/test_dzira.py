@@ -399,7 +399,7 @@ class TestGetIssues:
 
 
 class TestAddWorklog:
-    def test_calls_jira_add_worklog_with_provided_values(self):
+    def test_calls_log_work_with_provided_values(self):
         mock_worklog = Mock(raw={"timeSpent": "2h"}, issueId="123", id=321)
         mock_jira = Mock(add_worklog=Mock(return_value=mock_worklog))
 
@@ -431,14 +431,14 @@ class TestGetWorklog:
         assert get_worklog.is_decorated_with_spin_it
 
     @patch("src.dzira.dzira.datetime", Mock())
-    def test_returns_worklog(self):
-        mock_jira = Mock(worklog=Mock())
+    def test_returns_worklog(self, mocker):
+        mock_api = mocker.patch("src.dzira.dzira.api.get_worklog")
 
-        result = get_worklog(mock_jira, issue="123", worklog_id=999)
+        result = get_worklog(sentinel.jira, issue="123", worklog_id=999)
 
         assert type(result) == Result
-        assert result.result == mock_jira.worklog.return_value
-        mock_jira.worklog.assert_called_once_with(issue="123", id="999")
+        assert result.result == mock_api.return_value
+        mock_api.assert_called_once_with(sentinel.jira, issue="123", worklog_id="999")
 
 
 

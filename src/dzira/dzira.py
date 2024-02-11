@@ -193,21 +193,16 @@ def get_sprint(jira: JIRA, payload: D) -> Result:
     return Result(result=sprint, stdout=f"{out}{warning}")
 
 
-# TODO: catch errors and properly process them in Result (stderr?) // update tests for new param
 @spin_it("Adding worklog")
 def add_worklog(
         jira: JIRA,
         issue: str,
+        seconds: int,
         comment: str | None = None,
-        seconds: int | None = None,
         date: datetime | None = None,
         **_
 ) -> Result:
-    # EXTRACT >>>
-    work_log = jira.add_worklog(
-        issue=issue, timeSpentSeconds=seconds, comment=comment, started=date
-    )
-    # <<< EXTRACT
+    work_log: Worklog = api.log_work(jira, issue, seconds, comment, date)
     return Result(
         stdout=(
             f"spent {work_log.raw['timeSpent']} in {issue} "
@@ -218,7 +213,7 @@ def add_worklog(
 
 @spin_it("Getting worklog")
 def get_worklog(jira: JIRA, issue: str, worklog_id: str | int, **_) -> Result:
-    work_log = jira.worklog(issue=issue, id=str(worklog_id))
+    work_log: Worklog = api.get_worklog(jira, issue=issue, worklog_id=str(worklog_id))
     created = datetime.strptime(
         work_log.created, "%Y-%m-%dT%H:%M:%S.%f%z"
     ).astimezone().strftime("%a, %b %d, %H:%M:%S")
