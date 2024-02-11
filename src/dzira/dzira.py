@@ -22,7 +22,7 @@ from jira.exceptions import JIRAError
 from jira.resources import Board, Sprint, User, Worklog
 from tabulate import tabulate, tabulate_formats
 
-from dzira.api import connect_to_jira
+import dzira.api as api
 from dzira.betterdict import D
 
 
@@ -157,57 +157,41 @@ def get_config(config: dict = {}) -> D:
 def get_jira(config: D) -> Result:
     server, email, token = config("JIRA_SERVER", "JIRA_EMAIL", "JIRA_TOKEN")
     msg = f"connecting to {server}"
-    jira = connect_to_jira(server, email, token)
+    jira: JIRA = api.connect_to_jira(server, email, token)
     return Result(stdout=msg, result=jira)
 
 
 @spin_it("Getting board")
 def get_board(jira: JIRA, key: str) -> Result:
-    try:
-        boards = jira.boards(projectKeyOrID=key)
-    except JIRAError as exc_info:
-        raise Exception(str(exc_info))
-    if len(boards) > 1:
-        raise Exception(
-            f"Found more than one board matching {key!r}:\n"
-            f"{', '.join(b.raw['location']['displayName'] for b in boards)}"
-        )
+    board: Board = api.get_board_by_key(jira, key)
     return Result(
-        result=boards[0],
-        stdout=f'{boards[0].raw["location"]["displayName"]}'
+        result=board,
+        stdout=f'{board.raw["location"]["displayName"]}'
     )
 
 
-def _get_sprints(jira: JIRA, board: Board, state: str) -> list:
-    if sprints := jira.sprints(board_id=board.id, state=state):
-        return sprints
-    raise Exception(f"could not find any sprints for board {board.name!r}")
-
-
-def _get_first_sprint_matching_state(jira: JIRA, board: Board, state: str = "active", **_) -> Sprint:
-    sprints = _get_sprints(jira, board, state)
-    if len(sprints) > 1:
-        info = "\n".join([f"\t - {s.name}, id: {s.id}" for s in sprints])
-        raise Exception(
-            f"Found more than one {state} sprint:\n{info}\n"
-            "Use sprint id to get unambiguous result"
-        )
-    return sprints[0]
-
-
-def _get_sprint_from_id(jira: JIRA, sprint_id: int, **_) -> Sprint:
-    try:
-        return jira.sprint(sprint_id)
-    except JIRAError as exc:
-        raise Exception(str(exc))
+def process_sprint_out(sprint: Sprint) -> str:
+    fmt = lambda d: datetime.strptime(d, "%Y-%m-%dT%H:%M:%S.%fZ").strftime("%a, %b %d")
+    return f"{sprint.name} • id: {sprint.id} • {fmt(sprint.startDate)} -> {fmt(sprint.endDate)}"
 
 
 @spin_it("Getting sprint")
 def get_sprint(jira: JIRA, payload: D) -> Result:
-    fn = _get_sprint_from_id if payload.has("sprint_id") else _get_first_sprint_matching_state
-    sprint = fn(jira, **payload)
+    sprint_id, board, state = payload("sprint_id", "board", "state")
+    try:
+        warning = ""
+        if sprint_id:
+            sprint = api.get_sprint_by_id(jira, sprint_id)
+        else:
+            sprints = api.get_sprints_by_board(jira, board, state)
+            if len(sprints) > 1:
+                warning = f" (showing first sprint matching {state!r})"
+            sprint = sprints[0]
+    except:
+        raise Exception("Could not find sprint matching given criteria")
     out = process_sprint_out(sprint)
-    return Result(result=sprint, stdout=out)
+    return Result(result=sprint, stdout=f"{out}{warning}")
+
 
 
 def _get_sprint_issues(jira: JIRA, sprint: Sprint) -> list:
@@ -351,11 +335,6 @@ def cli(ctx, file, key, token, email, server, spin, color):
 ##################################################
 #  LS command
 ##################################################
-
-
-def process_sprint_out(sprint: Sprint) -> str:
-    fmt = lambda d: datetime.strptime(d, "%Y-%m-%dT%H:%M:%S.%fZ").strftime("%a, %b %d")
-    return f"{sprint.name} • id: {sprint.id} • {fmt(sprint.startDate)} -> {fmt(sprint.endDate)}"
 
 
 # TODO:

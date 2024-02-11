@@ -20,7 +20,6 @@ from src.dzira.dzira import (
     VALIDATE_DATE_FORMATS,
     VALID_OUTPUT_FORMATS,
     Result,
-    _get_sprints,
     _seconds_to_hour_minute_fmt,
     _update_worklog,
     add_worklog,
@@ -124,8 +123,36 @@ def mock_get_board(mocker):
 
 
 @pytest.fixture
+def mock_process_sprint_out(mocker):
+    return mocker.patch("src.dzira.dzira.process_sprint_out")
+
+
+@pytest.fixture
 def mock_connect_to_jira(mocker):
-    return mocker.patch("src.dzira.dzira.connect_to_jira")
+    return mocker.patch("src.dzira.dzira.api.connect_to_jira")
+
+
+@pytest.fixture
+def mock_get_board_by_key(mocker):
+    return mocker.patch(
+        "src.dzira.dzira.api.get_board_by_key",
+        Mock(return_value=Mock(raw={"location": {"displayName": "BoardName"}}))
+    )
+
+
+@pytest.fixture
+def mock_get_sprint_by_id(mocker):
+    return mocker.patch("src.dzira.dzira.api.get_sprint_by_id")
+
+
+
+@pytest.fixture
+def mock_get_sprints_by_board(mocker):
+    return mocker.patch(
+        "src.dzira.dzira.api.get_sprints_by_board",
+        Mock(return_value=[sentinel.sprint1])
+    )
+
 
 
 class TestC:
@@ -312,100 +339,49 @@ class TestGetBoard:
     def test_is_decorated_correctly(self):
         assert get_board.is_decorated_with_spin_it
 
-    def test_calls_jira_boards_and_wraps_the_result(self):
-        board = Mock(raw={"location": {"displayName": "Foo"}})
-        mock_jira = Mock(boards=Mock(return_value=[board]))
+    def test_gets_board(self, mock_get_board_by_key):
+        mock_jira = Mock()
 
         result = get_board(mock_jira, sentinel.key)
 
-        mock_jira.boards.assert_called_once_with(projectKeyOrID=sentinel.key)
-        assert result.result == board
-        assert "Foo" in result.stdout
-
-    def test_raises_when_no_board_found(self):
-        wrong_project_key = "foobar"
-        mock_jira = Mock(
-            boards=Mock(
-                side_effect=JIRAError(text=f"No project with key {wrong_project_key!r}")
-            )
-        )
-        with pytest.raises(Exception) as exc_info:
-            get_board(mock_jira, wrong_project_key)
-
-        assert "No project with key 'foobar'" in str(exc_info)
-
-    def test_raises_when_more_than_one_board_found(self):
-        ambiguous_key = "board"
-        mock_jira = Mock(
-            boards=Mock(
-                return_value=[Mock(raw={"location": {"displayName": f"Foo{n}"}}) for n in (1, 2)]
-            )
-        )
-
-        with pytest.raises(Exception) as exc_info:
-            get_board(mock_jira, ambiguous_key)
-
-        mock_jira.boards.assert_called_once_with(projectKeyOrID=ambiguous_key)
-        assert f"Found more than one board matching {ambiguous_key!r}" in str(exc_info)
-        assert f"Foo1, Foo2" in str(exc_info)
-
-
-class TestGetSprints:
-    def test_returns_sprints_found_by_jira_with_provided_board_and_state(self):
-        mock_jira = Mock(sprints=Mock(return_value=[sentinel.sprint]))
-        mock_board = Mock(id=1)
-
-        result = _get_sprints(mock_jira, mock_board, sentinel.state)
-
-        assert result == [sentinel.sprint]
-        mock_jira.sprints.assert_called_once_with(board_id=1, state=sentinel.state)
-
-    def test_raises_when_jira_could_not_find_sprints(self):
-        mock_jira = Mock(sprints=Mock(return_value=[]))
-        mock_board = Mock(id=1, name="ZZZ")
-
-        with pytest.raises(Exception) as exc_info:
-            _get_sprints(mock_jira, mock_board, "foo")
-
-        assert f"could not find any sprints for board {mock_board.name!r}" in str(
-            exc_info.value
-        )
+        mock_get_board_by_key.assert_called_once_with(mock_jira, sentinel.key)
+        assert type(result) == Result
+        assert result.result == mock_get_board_by_key.return_value
+        assert "BoardName" in result.stdout
 
 
 class TestGetSprint:
     def test_is_decorated_correctly(self):
         assert get_sprint.is_decorated_with_spin_it
 
-    def test_finds_sprint_from_id(self, mocker):
-        mock_get_sprint_from_id = mocker.patch("src.dzira.dzira._get_sprint_from_id")
-        mock_get_first_sprint_matching_state = mocker.patch("src.dzira.dzira._get_first_sprint_matching_state")
-        mock_process_sprint_out = mocker.patch("src.dzira.dzira.process_sprint_out", Mock(return_value=""))
+    def test_finds_sprint_from_id(self, mock_get_sprint_by_id, mock_process_sprint_out):
         mock_payload = D(sprint_id=sentinel.sprint_id)
 
-        get_sprint(sentinel.jira, mock_payload)
+        result = get_sprint(sentinel.jira, mock_payload)
 
-        mock_get_sprint_from_id.assert_called_once_with(sentinel.jira, **mock_payload)
-        assert not mock_get_first_sprint_matching_state.called
-        mock_process_sprint_out.assert_called_once_with(mock_get_sprint_from_id.return_value)
+        assert type(result) == Result
+        assert result.result == mock_get_sprint_by_id.return_value
+        mock_get_sprint_by_id.assert_called_once_with(sentinel.jira, sentinel.sprint_id)
+        mock_process_sprint_out.assert_called_once_with(mock_get_sprint_by_id.return_value)
 
-    def test_finds_sprint_using_state(self, mocker):
-        mock_get_sprint_from_id = mocker.patch("src.dzira.dzira._get_sprint_from_id")
-        mock_get_first_sprint_matching_state = mocker.patch("src.dzira.dzira._get_first_sprint_matching_state")
-        mock_process_sprint_out = mocker.patch("src.dzira.dzira.process_sprint_out", Mock(return_value=""))
-        mock_payload = D(state="foo")
+    def test_finds_sprint_using_state(self, mock_get_sprints_by_board, mock_process_sprint_out):
+        mock_payload = D(state=sentinel.state, board=sentinel.board)
 
-        get_sprint(sentinel.jira, mock_payload)
+        result = get_sprint(sentinel.jira, mock_payload)
 
-        mock_get_first_sprint_matching_state.assert_called_once_with(sentinel.jira, **mock_payload)
-        assert not mock_get_sprint_from_id.called
-        mock_process_sprint_out.assert_called_once_with(mock_get_first_sprint_matching_state.return_value)
+        assert type(result) == Result
+        mock_get_sprints_by_board.assert_called_once_with(sentinel.jira, sentinel.board, sentinel.state)
+        expected_sprint = mock_get_sprints_by_board.return_value[0]
+        assert result.result == expected_sprint
+        mock_process_sprint_out.assert_called_once_with(expected_sprint)
 
-    def test_returns_result_class_instance(self, mocker):
-        mocker.patch("src.dzira.dzira._get_sprint_from_id")
-        mocker.patch("src.dzira.dzira._get_first_sprint_matching_state")
-        mocker.patch("src.dzira.dzira.process_sprint_out", Mock(return_value=""))
+    def test_raises_when_not_one_sprint_found(self, mock_get_sprint_by_id):
+        mock_get_sprint_by_id.side_effect = Exception
 
-        assert type(get_sprint(sentinel.jira, D())) == Result
+        with pytest.raises(Exception) as exc:
+            get_sprint(sentinel.jira, D(sprint_id=sentinel.id))
+
+        assert "Could not find sprint matching given criteria" in str(exc)
 
 
 class TestGetIssuesPublic:
