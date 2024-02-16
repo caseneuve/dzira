@@ -215,3 +215,13 @@ Options:
   -f, --format [table|csv|json]   How to display the report  [default: table]
   -h, --help                      Show this message and exit
 ```
+
+# jq
+
+
+```shell
+jq -r \
+'(.issues[] | "\n\(.key): \(.summary) (\(.issue_total_time))\n- [\(.worklogs[].id)] \(.worklogs[].comment) (\(.worklogs[].spent))"), "\nTotal: \(.total_time)"' d.json
+```
+jq -r \
+'(.issues[] | "\n\(.key): \(.summary) (\(.issue_total_time))\n- [\(.worklogs[].id)] \(.worklogs[].comment) (\(.worklogs[].spent))"), "\nTotal: \(.total_time)"' d.json

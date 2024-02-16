@@ -6,7 +6,7 @@ import time
 from dataclasses import dataclass, field
 from functools import wraps
 from itertools import cycle
-from typing import Any
+from typing import Any, Callable
 
 from jira.exceptions import JIRAError
 
@@ -77,12 +77,18 @@ class Spinner:
                 except Exception as exc:
                     if type(exc) == JIRAError:
                         messages = exc.response.json().get("errorMessages", [])
-                        error_msg = " ".join(messages)
+                        if messages:
+                            error_msg = " ".join(messages)
+                        else:
+                            error_msg = (
+                                f"failed not perform the request while trying to {func.__name__.replace('_', ' ')}"
+                                " (no error supplied by JIRA) :("
+                            )
                     else:
                         error_msg = exc
                     print(
                         self.colorizer("\r", "^red", fail, separator, msg),
-                        end=":\n",
+                        end=":\t",
                         flush=True,
                         file=sys.stderr
                     )

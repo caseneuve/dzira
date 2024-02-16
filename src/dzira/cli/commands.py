@@ -9,13 +9,12 @@ from datetime import date, datetime, timedelta
 
 import click
 from jira import JIRA
-from jira.exceptions import JIRAError
-from jira.resources import Board, Sprint, User, Worklog
+from jira.resources import Board, Sprint, Worklog
 from tabulate import tabulate
 
-from .. import api
-from ..betterdict import D
-from ..cli.output import (
+from dzira import api
+from dzira.betterdict import D
+from dzira.cli.output import (
     Colors,
     Result,
     Spinner,
@@ -32,7 +31,7 @@ from .config import (
 colors = Colors()
 c = colors.c
 spinner = Spinner(c)
-spin = spinner.run
+spin_it = spinner.run
 
 
 ##################################################
@@ -40,7 +39,7 @@ spin = spinner.run
 ##################################################
 
 
-@spin("Getting client")
+@spin_it("Getting client")
 def get_jira(config: D) -> Result:
     server, email, token = config("JIRA_SERVER", "JIRA_EMAIL", "JIRA_TOKEN")
     msg = f"connecting to {server}"
@@ -48,7 +47,7 @@ def get_jira(config: D) -> Result:
     return Result(stdout=msg, result=jira)
 
 
-@spin("Getting board")
+@spin_it("Getting board")
 def get_board(jira: JIRA, key: str) -> Result:
     board: Board = api.get_board_by_key(jira, key)
     return Result(
@@ -62,7 +61,7 @@ def process_sprint_out(sprint: Sprint) -> str:
     return f"{sprint.name} • id: {sprint.id} • {fmt(sprint.startDate)} -> {fmt(sprint.endDate)}"
 
 
-@spin("Getting sprint")
+@spin_it("Getting sprint")
 def get_sprint(jira: JIRA, payload: D) -> Result:
     sprint_id, board, state = payload("sprint_id", "board", "state")
     try:
@@ -80,7 +79,7 @@ def get_sprint(jira: JIRA, payload: D) -> Result:
     return Result(result=sprint, stdout=f"{out}{warning}")
 
 
-@spin("Adding worklog")
+@spin_it("Adding worklog")
 def add_worklog(
         jira: JIRA,
         issue: str,
@@ -98,7 +97,7 @@ def add_worklog(
     )
 
 
-@spin("Getting worklog")
+@spin_it("Getting worklog")
 def get_worklog(jira: JIRA, issue: str, worklog_id: str | int, **_) -> Result:
     work_log: Worklog = api.get_worklog(jira, issue=issue, worklog_id=str(worklog_id))
     created = datetime.strptime(
@@ -126,7 +125,7 @@ def _update_worklog(
 
 # TODO: we can't update worklog to change the issue
 # * add delete option to worklog !!!
-@spin("Updating worklog")
+@spin_it("Updating worklog")
 def update_worklog(
         worklog: Worklog, time: str, comment: str, date: datetime | None = None, **_
 ) -> Result:
@@ -139,7 +138,7 @@ def update_worklog(
     return Result(stdout=f"updated: {info}")
 
 
-@spin("Getting issues")
+@spin_it("Getting issues")
 def get_issues(jira: JIRA, sprint: Sprint) -> Result:
     return Result(result=api.get_sprint_issues(jira, sprint))
 
@@ -210,13 +209,24 @@ def cli(ctx, file, key, token, email, server, spin, color):
 #  LS command
 ##################################################
 
+# TODO:
+# add --sprints/--issues
+# return {sprints: [], issues: []} and process accordingly
+# jira.sprints(board_id) -> need board OR jira.sprint(id) or sprint_info(sprint_id=id)
+
 
 def get_sprint_and_issues(jira: JIRA, payload: D) -> D:
-    if not payload.has("sprint_id"):
-        payload.update("board", get_board(jira, payload["JIRA_PROJECT_KEY"]).result)
-    sprint = get_sprint(jira, payload).result
-    issues = get_issues(jira, sprint).result
-    return D(sprint=sprint, issues=issues)
+    # TODO:
+    # fix: should pick up issues from closed/open/future -> pick up correct func in query
+
+    if (sprint_id := payload.get("sprint_id")):
+        query = f"sprint = {sprint_id}"
+    else:
+        query = f"project = {payload['JIRA_PROJECT_KEY']!r} AND sprint in openSprints()"
+    issues = jira.search_issues(jql_str=query)
+    # sprint = get_sprint(jira, payload).result
+    # issues = get_issues(jira, sprint).result
+    return D(sprint=None, issues=issues)
 
 
 def show_issues(sprint_and_issues: D, format: str) -> None:
@@ -475,7 +485,7 @@ def calculate_seconds(payload: D) -> D:
         raise click.BadParameter("start time cannot be later than end time")
     else:
         delta_seconds = (t2 - t1).total_seconds()
-        return payload.update("seconds", str(int(delta_seconds)))
+        return payload.update("seconds", int(delta_seconds))
 
 
 def establish_issue(jira: JIRA, payload: D) -> D:
@@ -587,32 +597,16 @@ def log(ctx, **_):
 ##################################################
 
 
-@spin("Getting user")
-def get_user(jira: JIRA, config: dict) -> Result:
-    try:
-        users = jira.search_users(query=config["JIRA_EMAIL"])
-    except Exception as exc:
-        raise Exception(str(exc))
-    if len(users) > 1:
-        raise Exception(f"Found more than one user\n{', '.join(u.displayName for u in users)}")
-    if users == []:
-        raise Exception("Could not find users matching given email address")
-
-    return Result(result=users[0], stdout=users[0].displayName)
+@spin_it("Getting user id")
+def get_user_id(jira: JIRA) -> Result:
+    return Result(result=api.get_current_user_id(jira))
 
 
-@spin("Getting issues")
+@spin_it("Getting issues")
 def get_issues_with_work_logged_on_date(jira: JIRA, report_date: datetime | None) -> Result:
-    if report_date is not None:
-        query = f"worklogDate = {report_date:%Y-%m-%d}"
-    else:
-        query = f"worklogDate >= startOfDay()"
+    issues = api.get_issues_by_work_logged_on_date(jira, report_date)
+    if report_date is None:
         report_date = datetime.combine(date.today(), datetime.min.time())
-    try:
-        issues = jira.search_issues(query)
-    except JIRAError as exc:
-        raise Exception(str(exc))
-
     return Result(
         result=issues,
         data=D(report_date=report_date),
@@ -623,30 +617,21 @@ def get_issues_with_work_logged_on_date(jira: JIRA, report_date: datetime | None
     )
 
 
-@spin("Getting worklogs")
-def get_user_worklogs_from_date(jira: JIRA, user: User, issues: Result) -> Result:
+@spin_it("Getting worklogs")
+def get_user_worklogs_from_date(user_email: str, issues: Result) -> Result:
     worklogs = D(counter=0)
-
     for issue in issues.result:
-        try:
-            issue_worklogs = jira.worklogs(issue.id)
-            matching = [
-                w for w in issue_worklogs
-                if (
-                        (w.author.accountId == user.accountId)
-                        and (
-                            issues.data.report_date
-                            <= datetime.strptime(w.started.split(".")[0], "%Y-%m-%dT%H:%M:%S")
-                            < (issues.data.report_date + timedelta(days=1))
-                        )
-                )
-            ]
-            if matching:
-                key = issue.raw["key"]
-                summary = issue.raw["fields"]["summary"]
-                worklogs.update((key, summary), matching, counter=lambda x: x + (len(matching)))
-        except Exception as exc:
-            raise Exception(str(exc))
+        matching = api.get_issue_worklogs_by_user_and_date(
+            issue, user_email, issues.data.report_date
+        )
+        if matching:
+            key = issue.key
+            summary = issue.fields.summary
+            # should be {id: {key: key, summary: summary, worklogs: matching}}
+            worklogs.update(
+                (key, summary), matching,
+                counter=lambda x: x + (len(matching))
+            )
 
     return Result(
         result=worklogs.without("counter"),
@@ -663,6 +648,7 @@ def _seconds_to_hour_minute_fmt(seconds):
     return f"{hours}h {minutes:02}m"
 
 
+# -> `data`, so it's processing data, and show_func only shows
 def show_report(worklogs: D, format: str | None) -> None:
     total_time = 0
     csv_rows = []
@@ -783,10 +769,9 @@ def report(ctx, report_date, format):
     """
     config = get_config(config=ctx.obj)
     jira = get_jira(config).result
-    user = get_user(jira, config).result
     issues = get_issues_with_work_logged_on_date(jira, report_date)
     if issues.result:
-        worklogs = get_user_worklogs_from_date(jira, user, issues).result
+        worklogs = get_user_worklogs_from_date(config["JIRA_EMAIL"], issues).result
     else:
         worklogs = D()
     show_report(worklogs, format=format)

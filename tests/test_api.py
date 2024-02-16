@@ -1,3 +1,6 @@
+import os
+import time
+from datetime import datetime
 from unittest.mock import Mock, sentinel
 
 import pytest
@@ -7,7 +10,11 @@ from src.dzira.api import (
     get_board_by_key,
     get_closed_sprints_issues,
     get_current_sprint_issues,
+    get_current_user_id,
+    get_current_user_name,
     get_future_sprint_issues,
+    get_issue_worklogs_by_user_and_date,
+    get_issues_by_work_logged_on_date,
     get_sprint_issues,
     get_sprints_by_board,
     get_worklog,
@@ -17,7 +24,7 @@ from src.dzira.api import (
 
 # fixtures:
 
-@pytest.fixture
+@pytest.fixture()
 def mock_jira(mocker):
     return mocker.patch("src.dzira.api.JIRA")
 
@@ -60,6 +67,20 @@ def test_get_board_by_key_raises_when_more_than_one_board_found(mock_jira):
         get_board_by_key(mock_jira, "key")
 
     assert "Found more than one board matching 'key'" in str(exc)
+
+
+def test_get_current_user_id(mock_jira):
+    result = get_current_user_id(mock_jira)
+
+    mock_jira.current_user.assert_called_once()
+    assert result == mock_jira.current_user.return_value
+
+
+def test_get_current_user_name(mock_jira):
+    result = get_current_user_name(mock_jira)
+
+    mock_jira.current_user.assert_called_once_with("displayName")
+    assert result == mock_jira.current_user.return_value
 
 
 def test_get_sprints_by_board(mock_jira, mock_board):
@@ -131,3 +152,70 @@ def test_get_worklog(mock_jira):
 
     assert result == mock_jira.worklog.return_value
     mock_jira.worklog.assert_called_once_with(issue=sentinel.issue, id=sentinel.worklog_id)
+
+
+def test_get_issues_by_work_logged_on_date_uses_date(mock_jira):
+    report_date = datetime(2024, 2, 11, 10, 24)
+
+    result = get_issues_by_work_logged_on_date(mock_jira, report_date)
+
+    assert result == mock_jira.search_issues.return_value
+    mock_jira.search_issues.assert_called_once_with("worklogDate = 2024-02-11")
+
+
+def test_get_issues_by_work_logged_on_date_uses_today_as_fallback(mock_jira):
+    result = get_issues_by_work_logged_on_date(mock_jira)
+
+    assert result == mock_jira.search_issues.return_value
+    mock_jira.search_issues.assert_called_once_with("worklogDate >= startOfDay()")
+
+
+def test_get_issue_worklogs_by_user_and_date():
+    os.environ["TZ"] = "CET"
+    time.tzset()
+
+    email_address = "foo@bar"
+    report_date = datetime(2023, 11, 26, 0, 0).astimezone()
+
+    worklog1 = Mock(
+        started="2023-11-26T13:42:16.000-0600",
+        raw={
+            "timeSpent": "30m",
+            "comment": "ONLY ONE MATCHING",
+            "timeSpentSeconds": 30 * 60,
+        },
+        author=Mock(emailAddress="foo@bar")
+    )
+    worklog2 = Mock(
+        started="2023-11-25T01:42:00.000-0600",
+        raw={
+            "timeSpent": "1h 15m",
+            "comment": "DATE BEFORE",
+            "timeSpentSeconds": (60 * 60) + (15 * 60),
+        },
+        author=Mock(emailAddress="foo@bar")
+    )
+    worklog3 = Mock(
+        started="2023-11-26T17:24:00.000-0500",
+        raw={
+            "timeSpent": "2h",
+            "comment": "WRONG AUTHOR",
+            "timeSpentSeconds": 2 * 60 * 60,
+        },
+        author=Mock(emailAddress="baz@quux")
+    )
+    worklog4 = Mock(
+        started="2023-11-27T01:42:00.000-0600",
+        raw={
+            "timeSpent": "1h 15m",
+            "comment": "DATE AFTER",
+            "timeSpentSeconds": (60 * 60) + (15 * 60),
+        },
+        author=Mock(emailAddress="foo@bar")
+    )
+    mock_issue = Mock(fields=Mock(worklog=Mock(worklogs=[worklog1, worklog2, worklog3, worklog4])))
+
+
+    result = get_issue_worklogs_by_user_and_date(mock_issue, email_address, report_date)
+
+    assert result == [worklog1]
