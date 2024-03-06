@@ -2,17 +2,20 @@ from typing import Iterable
 
 
 class D(dict):
+    def __getattr__(self, key):
+        return self.get(key)
+
+    def __setattr__(self, key, value):
+        super().__setitem__(key, value)
+
+    def __delattr__(self, item):
+        self.__delitem__(item)
+
     def __call__(self, *keys) -> Iterable:
         if keys:
             return [self.get(*k) if isinstance(k, tuple) else self.get(k) for k in keys]
         else:
             return self.values()
-
-    def __getattr__(self, key):
-        try:
-            return self[key]
-        except KeyError:
-            raise AttributeError(f"'D' object has no attribute {key!r}")
 
     def _update(self, k, v):
         self[k] = v(self.get(k)) if callable(v) else v
