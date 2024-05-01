@@ -1,5 +1,29 @@
 # Changelog: `dzira`
 
+## [0.3.0](https://github.com/caseneuve/dzira/releases/tag/v0.3.0)
+
+### Changed
+
+First steps toward modularity ([#5](https://github.com/caseneuve/dzira/issues/5)):
+
+```
+src/dzira
+├── api.py
+├── betterdict.py
+└── cli
+    ├── commands.py
+    ├── config.py
+    └── output.py
+```
+
+### TODO
+
+- Need to extract data processing to `data.py`, so the "showing"
+  commands (`ls`, `report`) can do only showing.
+- Make an interface for `jira`, so eventually we can get rid of the
+  `jira` package dependency and use our own Jira API wrapper.
+
+
 ## [0.2.1](https://github.com/caseneuve/dzira/releases/tag/v0.2) (pre)
 
 ### Fixed
