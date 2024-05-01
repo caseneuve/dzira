@@ -2,6 +2,7 @@
 *.json
 *.png
 .coverage
+.dir-locals.el
 .lsp.workspace
 .pypirc
 .pytest_cache

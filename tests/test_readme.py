@@ -2,7 +2,7 @@ from pathlib import Path
 
 from click.testing import CliRunner
 
-from src.dzira.dzira import cli
+from src.dzira.cli.commands import cli
 
 
 runner = CliRunner()

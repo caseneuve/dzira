@@ -1,188 +1,36 @@
 from __future__ import annotations
 
-import concurrent.futures
 import csv
 import json
-import os
 import re
 import subprocess
 import sys
-import time
-from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
-from functools import wraps
-from itertools import cycle
-from pathlib import Path
-from typing import Any, Iterable
 
 import click
-from dotenv import dotenv_values
 from jira import JIRA
-from jira.exceptions import JIRAError
-from jira.resources import Board, Sprint, User, Worklog
-from tabulate import tabulate, tabulate_formats
+from jira.resources import Board, Sprint, Worklog
+from tabulate import tabulate
+
+from dzira import api
+from dzira.betterdict import D
+from dzira.cli.output import (
+    Colors,
+    Result,
+    Spinner,
+    hide_cursor,
+    show_cursor,
+)
+from .config import (
+    DEFAULT_OUTPUT_FORMAT,
+    VALID_OUTPUT_FORMATS,
+    get_config,
+)
 
 
-CONFIG_DIR_NAME = "dzira"
-DOTFILE = f".{CONFIG_DIR_NAME}"
-REQUIRED_KEYS = "JIRA_SERVER", "JIRA_EMAIL", "JIRA_TOKEN", "JIRA_PROJECT_KEY"
-
-VALID_OUTPUT_FORMATS = sorted(tabulate_formats + ["json", "csv"])
-DEFAULT_OUTPUT_FORMAT = "simple_grid"
-
-use_spinner = True
-use_color = True
-
-
-def c(*args):
-    C = {k: f"\033[{v}m" for k, v in (("^reset", 0),
-                                      ("^bold", 1),
-                                      ("^red", 91),
-                                      ("^green", 92),
-                                      ("^yellow", 93),
-                                      ("^blue", 94),
-                                      ("^magenta", 95),
-                                      ("^cyan", 96))}
-    if use_color:
-        return "".join([C.get(a, a) for a in args]) + C["^reset"]
-    return "".join([a for a in args if a not in C])
-
-
-def hide_cursor():
-    print("\033[?25l", end="", flush=True, file=sys.stderr)
-
-
-def show_cursor():
-    print("\033[?25h", end="", flush=True, file=sys.stderr)
-
-
-class D(dict):
-    def __call__(self, *keys) -> Iterable:
-        if keys:
-            return [self.get(*k) if isinstance(k, tuple) else self.get(k) for k in keys]
-        else:
-            return self.values()
-
-    def __getattr__(self, key):
-        try:
-            return self[key]
-        except KeyError:
-            raise AttributeError(f"'D' object has no attribute {key!r}")
-
-    def _update(self, k, v):
-        self[k] = v(self.get(k)) if callable(v) else v
-
-    def update(self, *args, **kwargs):
-        if len(args) % 2 != 0:
-            raise Exception(
-                f"Provide even number of key-value args, need a value for key: {args[-1]!r}"
-            )
-        for i in range(0, len(args), 2):
-            self._update(args[i], args[i + 1])
-        for k, v in kwargs.items():
-            self._update(k, v)
-        return self
-
-    def has(self, k):
-        return self.get(k) is not None
-
-    def without(self, *args):
-        return D({k: v for k, v in self.items() if k not in args})
-
-    def __repr__(self):
-        return f"betterdict({dict(self)})"
-
-    def __str__(self):
-        return str(dict(self))
-
-
-@dataclass
-class Result:
-    result: Any = None
-    stdout: str = ""
-    data: D = field(default_factory=D)
-
-
-def spin_it(msg="", done="✓", fail="✗"):
-    spinner = cycle("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
-    separator = "  "
-    connector = ":\t"
-
-    def decorator(func):
-        func.is_decorated_with_spin_it = True
-
-        @wraps(func)
-        def wrapper(*args, **kwargs):
-            if not use_spinner:
-                return func(*args, **kwargs)
-            try:
-                with concurrent.futures.ThreadPoolExecutor() as executor:
-                    future = executor.submit(func, *args, **kwargs)
-
-                    while future.running():
-                        print(
-                            c("\r", "^magenta", next(spinner), separator, msg),
-                            end="",
-                            flush=True,
-                            file=sys.stderr
-                        )
-                        time.sleep(0.1)
-
-                    r: Result = future.result()
-                    print(
-                        c("\r", "^green", done, separator, msg, "^reset", connector, r.stdout),
-                        flush=True,
-                        file=sys.stderr
-                    )
-                    return r
-            except Exception as exc:
-                if type(exc) == JIRAError:
-                    messages = exc.response.json().get("errorMessages", [])
-                    error_msg = " ".join(messages)
-                else:
-                    error_msg = exc
-                print(
-                    c("\r", "^red", fail, separator, msg),
-                    end=":\n",
-                    flush=True,
-                    file=sys.stderr
-                )
-                raise Exception(error_msg)
-        return wrapper
-    return decorator
-
-
-def get_config_from_file(config_file: str | Path | None = None) -> dict:
-    if config_file is None:
-        config_file_dir = os.environ.get("XDG_CONFIG_HOME", os.environ["HOME"])
-        for path in (
-                os.path.join(config_file_dir, CONFIG_DIR_NAME, "env"),
-                os.path.join(config_file_dir, DOTFILE),
-                os.path.join(os.environ["HOME"], ".config", CONFIG_DIR_NAME, "env"),
-                os.path.join(os.environ["HOME"], ".config", DOTFILE),
-        ):
-            if os.path.isfile(path):
-                config_file = path
-                break
-
-    return dotenv_values(config_file)
-
-
-def get_config(config: dict = {}) -> dict:
-    for cfg_fn in (
-        lambda: get_config_from_file(config.get("file")),
-        lambda: (_ for _ in ()).throw(
-            Exception(
-                "could not find required config values: "
-                f"{', '.join(sorted(set(REQUIRED_KEYS).difference(set(config))))}"
-            )
-        ),
-    ):
-        if set(REQUIRED_KEYS).issubset(config.keys()):
-            break
-        config = {**cfg_fn(), **config}
-
-    return config
+colors = Colors()
+c = colors.c
+spinner = Spinner(c)
 
 
 ##################################################
@@ -190,90 +38,57 @@ def get_config(config: dict = {}) -> dict:
 ##################################################
 
 
-@spin_it("Getting client")
-def get_jira(config: dict) -> Result:
-    jira = JIRA(
-        server=f"https://{config['JIRA_SERVER']}",
-        basic_auth=(config["JIRA_EMAIL"], config["JIRA_TOKEN"]),
-    )
-    msg = f"connecting to {config['JIRA_SERVER']}"
+@spinner.run("Getting client")
+def get_jira(config: D) -> Result:
+    server, email, token = config("JIRA_SERVER", "JIRA_EMAIL", "JIRA_TOKEN")
+    msg = f"connecting to {server}"
+    jira: JIRA = api.connect_to_jira(server, email, token)
     return Result(stdout=msg, result=jira)
 
 
-@spin_it("Getting board")
+@spinner.run("Getting board")
 def get_board(jira: JIRA, key: str) -> Result:
-    try:
-        boards = jira.boards(projectKeyOrID=key)
-    except JIRAError as exc_info:
-        raise Exception(str(exc_info))
-    if len(boards) > 1:
-        raise Exception(
-            f"Found more than one board matching {key!r}:\n"
-            f"{', '.join(b.raw['location']['displayName'] for b in boards)}"
-        )
+    board: Board = api.get_board_by_key(jira, key)
     return Result(
-        result=boards[0],
-        stdout=f'{boards[0].raw["location"]["displayName"]}'
+        result=board,
+        stdout=f'{board.raw["location"]["displayName"]}'
     )
 
 
-def _get_sprints(jira: JIRA, board: Board, state: str) -> list:
-    if sprints := jira.sprints(board_id=board.id, state=state):
-        return sprints
-    raise Exception(f"could not find any sprints for board {board.name!r}")
+# TODO: -> move to data
+def process_sprint_out(sprint: Sprint | D) -> str:
+    fmt = lambda d: datetime.strptime(d, "%Y-%m-%dT%H:%M:%S.%fZ").strftime("%a, %b %d")
+    return f"{sprint.name} • id: {sprint.id} • {fmt(sprint.startDate)} -> {fmt(sprint.endDate)}"
 
 
-def _get_first_sprint_matching_state(jira: JIRA, board: Board, state: str = "active", **_) -> Sprint:
-    sprints = _get_sprints(jira, board, state)
-    if len(sprints) > 1:
-        info = "\n".join([f"\t - {s.name}, id: {s.id}" for s in sprints])
-        raise Exception(
-            f"Found more than one {state} sprint:\n{info}\n"
-            "Use sprint id to get unambiguous result"
-        )
-    return sprints[0]
-
-
-def _get_sprint_from_id(jira: JIRA, sprint_id: int, **_) -> Sprint:
-    try:
-        return jira.sprint(sprint_id)
-    except JIRAError as exc:
-        raise Exception(str(exc))
-
-
-@spin_it("Getting sprint")
+@spinner.run("Getting sprint")
 def get_sprint(jira: JIRA, payload: D) -> Result:
-    fn = _get_sprint_from_id if payload.has("sprint_id") else _get_first_sprint_matching_state
-    sprint = fn(jira, **payload)
+    sprint_id, board, state = payload("sprint_id", "board", "state")
+    try:
+        warning = ""
+        if sprint_id:
+            sprint = api.get_sprint_by_id(jira, sprint_id)
+        else:
+            sprints = api.get_sprints_by_board(jira, board, state)
+            if len(sprints) > 1:
+                warning = f" (showing most recent sprint matching {state!r})"
+            sprint = sprints[-1]
+    except:
+        raise Exception("Could not find sprint matching given criteria")
     out = process_sprint_out(sprint)
-    return Result(result=sprint, stdout=out)
+    return Result(result=sprint, stdout=f"{out}{warning}")
 
 
-def _get_sprint_issues(jira: JIRA, sprint: Sprint) -> list:
-    if issues := jira.search_issues(jql_str=f"Sprint = {sprint.name!r}"):
-        return list(issues)
-    raise Exception(f"could not find any issues for sprint {sprint.name!r}")
-
-
-@spin_it("Getting issues")
-def get_issues(jira: JIRA, sprint: Sprint) -> Result:
-    issues: list = _get_sprint_issues(jira, sprint)
-    return Result(result=issues)
-
-
-# TODO: catch errors and properly process them in Result (stderr?) // update tests for new param
-@spin_it("Adding worklog")
+@spinner.run("Adding worklog")
 def add_worklog(
         jira: JIRA,
         issue: str,
+        seconds: int,
         comment: str | None = None,
-        seconds: int | None = None,
         date: datetime | None = None,
         **_
 ) -> Result:
-    work_log = jira.add_worklog(
-        issue=issue, timeSpentSeconds=seconds, comment=comment, started=date
-    )
+    work_log: Worklog = api.log_work(jira, issue, seconds, comment, date)
     return Result(
         stdout=(
             f"spent {work_log.raw['timeSpent']} in {issue} "
@@ -282,9 +97,9 @@ def add_worklog(
     )
 
 
-@spin_it("Getting worklog")
+@spinner.run("Getting worklog")
 def get_worklog(jira: JIRA, issue: str, worklog_id: str | int, **_) -> Result:
-    work_log = jira.worklog(issue=issue, id=str(worklog_id))
+    work_log: Worklog = api.get_worklog(jira, issue=issue, worklog_id=str(worklog_id))
     created = datetime.strptime(
         work_log.created, "%Y-%m-%dT%H:%M:%S.%f%z"
     ).astimezone().strftime("%a, %b %d, %H:%M:%S")
@@ -310,7 +125,7 @@ def _update_worklog(
 
 # TODO: we can't update worklog to change the issue
 # * add delete option to worklog !!!
-@spin_it("Updating worklog")
+@spinner.run("Updating worklog")
 def update_worklog(
         worklog: Worklog, time: str, comment: str, date: datetime | None = None, **_
 ) -> Result:
@@ -323,19 +138,17 @@ def update_worklog(
     return Result(stdout=f"updated: {info}")
 
 
-def set_spinner_use(with_spinner: bool):
-    global use_spinner;
-    use_spinner = with_spinner and sys.stdin.isatty()
-
-
-def set_color_use(with_color: bool):
-    global use_color
-    use_color = with_color and sys.stdin.isatty()
-
-
 ##################################################
 #  CLI wrapper
 ##################################################
+
+
+def set_spinner_use(with_spinner: bool):
+    spinner.use = with_spinner and sys.stdin.isatty()
+
+
+def set_color_use(with_color: bool):
+    colors.use = with_color and sys.stdin.isatty()
 
 
 @click.group()
@@ -391,26 +204,32 @@ def cli(ctx, file, key, token, email, server, spin, color):
 #  LS command
 ##################################################
 
-
-def process_sprint_out(sprint: Sprint) -> str:
-    fmt = lambda d: datetime.strptime(d, "%Y-%m-%dT%H:%M:%S.%fZ").strftime("%a, %b %d")
-    return f"{sprint.name} • id: {sprint.id} • {fmt(sprint.startDate)} -> {fmt(sprint.endDate)}"
-
-
 # TODO:
-# - we probably should check board always, as sprint_id may not be matching the team's board...
-# - catch errors
-def get_sprint_and_issues(jira: JIRA, payload: D) -> D:
-    if not payload.has("sprint_id"):
-        payload.update("board", get_board(jira, payload["JIRA_PROJECT_KEY"]).result)
-    sprint = get_sprint(jira, payload).result
-    issues = get_issues(jira, sprint).result
-    return D(sprint=sprint, issues=issues)
+# add --sprints/--issues
+# return {sprints: [], issues: []} and process accordingly
+# jira.sprints(board_id) -> need board OR jira.sprint(id) or sprint_info(sprint_id=id)
 
 
+@spinner.run("Getting issues")
+def get_issues(jira: JIRA, payload: D) -> Result:
+    project_key, sprint_id, state = payload("JIRA_PROJECT_KEY", "sprint_id", ("state", "active"))
+    issues: list = api.search_issues_with_sprint_info(
+        jira, project_key=project_key, sprint_id=sprint_id, state=state
+    )
+    if issues:
+        # TODO: should use func from dzira.data
+        sprint_info = D(issues[0].raw["fields"]["Sprint"][0])
+        out = process_sprint_out(sprint_info)
+    else:
+        out = "No issues found"
+        sprint_info = {}
+    return Result(result=D(sprint=sprint_info, issues=issues), stdout=out)
+
+
+# TODO: move data processing to data
 def show_issues(sprint_and_issues: D, format: str) -> None:
     if format in ("json", "csv"):
-        global use_color; use_color = False
+        colors.use = False
 
     fmt = lambda t: str(timedelta(seconds=t)) if t else None
     state_clr = {"To Do": "^magenta", "In Progress": "^yellow", "Done": "^green"}
@@ -477,7 +296,7 @@ def validate_output_format(_, __, value):
 @click.pass_context
 @click.option(
     "-s", "--state",
-    type=click.Choice(["active", "closed"]), default="active", show_default=True,
+    type=click.Choice(["active", "closed", "future"]), default="active", show_default=True,
     help="Sprint state used for filtering",
 )
 @click.option(
@@ -533,12 +352,10 @@ def ls(ctx, state, sprint_id, format):
         ]
       }
     """
-    config = get_config(config=ctx.obj)
-    jira = get_jira(config).result
-    sprint_and_issues: D = get_sprint_and_issues(
-        jira, D(state=state, sprint_id=sprint_id, **config)
-    )
-    show_issues(sprint_and_issues, format=format)
+    config: D = get_config(config=ctx.obj)
+    jira: JIRA = get_jira(config).result
+    issues: D = get_issues(jira, D(state=state, sprint_id=sprint_id, **config)).result
+    show_issues(issues, format=format)
 
 
 ##################################################
@@ -664,7 +481,7 @@ def calculate_seconds(payload: D) -> D:
         raise click.BadParameter("start time cannot be later than end time")
     else:
         delta_seconds = (t2 - t1).total_seconds()
-        return payload.update("seconds", str(int(delta_seconds)))
+        return payload.update("seconds", int(delta_seconds))
 
 
 def establish_issue(jira: JIRA, payload: D) -> D:
@@ -674,8 +491,8 @@ def establish_issue(jira: JIRA, payload: D) -> D:
     if issue.isdigit():
         return payload.update("issue", f"{key}-{issue}")
 
-    sprint_issues = get_sprint_and_issues(jira, payload)
-    candidates = [i for i in sprint_issues if issue.lower() in i.fields.summary.lower()]
+    sprint_issues = get_issues(jira, payload).result
+    candidates = [i for i in sprint_issues.issues if issue.lower() in i.fields.summary.lower()]
 
     if not candidates:
         raise Exception("could not find any matching issues")
@@ -776,32 +593,16 @@ def log(ctx, **_):
 ##################################################
 
 
-@spin_it("Getting user")
-def get_user(jira: JIRA, config: dict) -> Result:
-    try:
-        users = jira.search_users(query=config["JIRA_EMAIL"])
-    except Exception as exc:
-        raise Exception(str(exc))
-    if len(users) > 1:
-        raise Exception(f"Found more than one user\n{', '.join(u.displayName for u in users)}")
-    if users == []:
-        raise Exception("Could not find users matching given email address")
-
-    return Result(result=users[0], stdout=users[0].displayName)
+@spinner.run("Getting user id")
+def get_user_id(jira: JIRA) -> Result:
+    return Result(result=api.get_current_user_id(jira))
 
 
-@spin_it("Getting issues")
+@spinner.run("Getting issues")
 def get_issues_with_work_logged_on_date(jira: JIRA, report_date: datetime | None) -> Result:
-    if report_date is not None:
-        query = f"worklogDate = {report_date:%Y-%m-%d}"
-    else:
-        query = f"worklogDate >= startOfDay()"
+    issues = api.get_issues_by_work_logged_on_date(jira, report_date)
+    if report_date is None:
         report_date = datetime.combine(date.today(), datetime.min.time())
-    try:
-        issues = jira.search_issues(query)
-    except JIRAError as exc:
-        raise Exception(str(exc))
-
     return Result(
         result=issues,
         data=D(report_date=report_date),
@@ -812,30 +613,18 @@ def get_issues_with_work_logged_on_date(jira: JIRA, report_date: datetime | None
     )
 
 
-@spin_it("Getting worklogs")
-def get_user_worklogs_from_date(jira: JIRA, user: User, issues: Result) -> Result:
+@spinner.run("Getting worklogs")
+def get_user_worklogs_from_date(jira: JIRA, user_email: str, issues: Result) -> Result:
     worklogs = D(counter=0)
-
     for issue in issues.result:
-        try:
-            issue_worklogs = jira.worklogs(issue.id)
-            matching = [
-                w for w in issue_worklogs
-                if (
-                        (w.author.accountId == user.accountId)
-                        and (
-                            issues.data.report_date
-                            <= datetime.strptime(w.started.split(".")[0], "%Y-%m-%dT%H:%M:%S")
-                            < (issues.data.report_date + timedelta(days=1))
-                        )
-                )
-            ]
-            if matching:
-                key = issue.raw["key"]
-                summary = issue.raw["fields"]["summary"]
-                worklogs.update((key, summary), matching, counter=lambda x: x + (len(matching)))
-        except Exception as exc:
-            raise Exception(str(exc))
+        report_date = issues.data.report_date
+        assert type(report_date) == datetime, f"Got unexpected report_date type {type(report_date)}"
+        matching: list = api.get_issue_worklogs_by_user_and_date(
+            jira, issue, user_email, report_date
+        )
+        if matching:
+            worklogs[issue.id] = D(key=issue.key, summary=issue.fields.summary, worklogs=matching)
+            worklogs.update(counter=lambda x: x + (len(matching)))
 
     return Result(
         result=worklogs.without("counter"),
@@ -852,16 +641,17 @@ def _seconds_to_hour_minute_fmt(seconds):
     return f"{hours}h {minutes:02}m"
 
 
-def show_report(worklogs: D, format: str | None) -> None:
+# -> `data`, so it's processing data, and show_func only shows
+def show_report(issues_to_worklogs: D, format: str | None) -> None:
     total_time = 0
     csv_rows = []
     json_dict = {"issues": [], "total_time": None, "total_seconds": None}
     tables = []
-    for issue in worklogs:
-        key, summary = issue
+    for issue_id in issues_to_worklogs:
+        key, summary, worklogs = issues_to_worklogs[issue_id]("key", "summary", "worklogs")
         issue_total_time = 0
         issue_worklogs = []
-        for w in worklogs[issue]:
+        for w in worklogs:
             started, time_spent, comment, time_spent_seconds = D(w.raw)(
                 "started", "timeSpent", "comment", "timeSpentSeconds"
             )
@@ -972,12 +762,12 @@ def report(ctx, report_date, format):
     """
     config = get_config(config=ctx.obj)
     jira = get_jira(config).result
-    user = get_user(jira, config).result
     issues = get_issues_with_work_logged_on_date(jira, report_date)
     if issues.result:
-        worklogs = get_user_worklogs_from_date(jira, user, issues).result
+        worklogs = get_user_worklogs_from_date(jira, config["JIRA_EMAIL"], issues).result
     else:
         worklogs = D()
+
     show_report(worklogs, format=format)
 
 
@@ -1002,10 +792,3 @@ def main():
     finally:
         if sys.stdin.isatty():
             show_cursor()
-
-
-if __name__ == "__main__":
-    main()
-
-
-# -*- python-indent-offset: 4 -*-
