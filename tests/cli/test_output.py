@@ -14,10 +14,6 @@ from src.dzira.cli.output import (
 
 
 class TestColors:
-    def setup(self):
-        self.colors = Colors()
-        self.c = self.colors.c
-
     @pytest.mark.parametrize(
         "test_input,expected",
         [
@@ -45,12 +41,13 @@ class TestColors:
          ]
     )
     def test_is_variadic(self, test_input, expected):
-        assert self.c(*test_input) == expected
+        assert Colors().c(*test_input) == expected
 
     def test_returns_string_without_color_tags_when_use_color_is_false(self):
-        self.colors.use = False
+        colors = Colors()
+        colors.use = False
 
-        assert self.c("^bold", "this ", "^red", "text ", "^blue", "does not have colors", "^reset") == (
+        assert colors.c("^bold", "this ", "^red", "text ", "^blue", "does not have colors", "^reset") == (
             "this text does not have colors"
         )
 
