@@ -113,7 +113,11 @@ ISSUES_DEAFAULT_FIELDS = ["Sprint,status,summary,timespent,timeestimate"]
 
 
 def search_issues_with_sprint_info(
-        jira: JIRA, project_key: str, state: str = "active", sprint_id: str | None = None, extra_fields: list | None = None
+        jira: JIRA,
+        project_key: str,
+        state: str = "active",
+        sprint_id: str | None = None,
+        extra_fields: list | None = None,
 ) -> list:
     if sprint_id:
         query = f"sprint = {sprint_id}"

@@ -6,11 +6,11 @@ import time
 from dataclasses import dataclass, field
 from functools import wraps
 from itertools import cycle
-from typing import Any, Callable
+from typing import Any
 
 from jira.exceptions import JIRAError
 
-from ..betterdict import D
+from dzira.betterdict import D
 
 
 class Colors:

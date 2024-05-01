@@ -31,7 +31,6 @@ from .config import (
 colors = Colors()
 c = colors.c
 spinner = Spinner(c)
-spin_it = spinner.run
 
 
 ##################################################
@@ -39,7 +38,7 @@ spin_it = spinner.run
 ##################################################
 
 
-@spin_it("Getting client")
+@spinner.run("Getting client")
 def get_jira(config: D) -> Result:
     server, email, token = config("JIRA_SERVER", "JIRA_EMAIL", "JIRA_TOKEN")
     msg = f"connecting to {server}"
@@ -47,7 +46,7 @@ def get_jira(config: D) -> Result:
     return Result(stdout=msg, result=jira)
 
 
-@spin_it("Getting board")
+@spinner.run("Getting board")
 def get_board(jira: JIRA, key: str) -> Result:
     board: Board = api.get_board_by_key(jira, key)
     return Result(
@@ -62,7 +61,7 @@ def process_sprint_out(sprint: Sprint | D) -> str:
     return f"{sprint.name} • id: {sprint.id} • {fmt(sprint.startDate)} -> {fmt(sprint.endDate)}"
 
 
-@spin_it("Getting sprint")
+@spinner.run("Getting sprint")
 def get_sprint(jira: JIRA, payload: D) -> Result:
     sprint_id, board, state = payload("sprint_id", "board", "state")
     try:
@@ -80,7 +79,7 @@ def get_sprint(jira: JIRA, payload: D) -> Result:
     return Result(result=sprint, stdout=f"{out}{warning}")
 
 
-@spin_it("Adding worklog")
+@spinner.run("Adding worklog")
 def add_worklog(
         jira: JIRA,
         issue: str,
@@ -98,7 +97,7 @@ def add_worklog(
     )
 
 
-@spin_it("Getting worklog")
+@spinner.run("Getting worklog")
 def get_worklog(jira: JIRA, issue: str, worklog_id: str | int, **_) -> Result:
     work_log: Worklog = api.get_worklog(jira, issue=issue, worklog_id=str(worklog_id))
     created = datetime.strptime(
@@ -126,7 +125,7 @@ def _update_worklog(
 
 # TODO: we can't update worklog to change the issue
 # * add delete option to worklog !!!
-@spin_it("Updating worklog")
+@spinner.run("Updating worklog")
 def update_worklog(
         worklog: Worklog, time: str, comment: str, date: datetime | None = None, **_
 ) -> Result:
@@ -211,9 +210,9 @@ def cli(ctx, file, key, token, email, server, spin, color):
 # jira.sprints(board_id) -> need board OR jira.sprint(id) or sprint_info(sprint_id=id)
 
 
-@spin_it("Getting issues")
+@spinner.run("Getting issues")
 def get_issues(jira: JIRA, payload: D) -> Result:
-    project_key, sprint_id, state = payload("JIRA_PROJECT_KEY", "sprint_id", ("state", "open"))
+    project_key, sprint_id, state = payload("JIRA_PROJECT_KEY", "sprint_id", ("state", "active"))
     issues: list = api.search_issues_with_sprint_info(
         jira, project_key=project_key, sprint_id=sprint_id, state=state
     )
@@ -227,6 +226,7 @@ def get_issues(jira: JIRA, payload: D) -> Result:
     return Result(result=D(sprint=sprint_info, issues=issues), stdout=out)
 
 
+# TODO: move data processing to data
 def show_issues(sprint_and_issues: D, format: str) -> None:
     if format in ("json", "csv"):
         colors.use = False
@@ -491,8 +491,8 @@ def establish_issue(jira: JIRA, payload: D) -> D:
     if issue.isdigit():
         return payload.update("issue", f"{key}-{issue}")
 
-    sprint_issues = get_issues(jira, payload)
-    candidates = [i for i in sprint_issues if issue.lower() in i.fields.summary.lower()]
+    sprint_issues = get_issues(jira, payload).result
+    candidates = [i for i in sprint_issues.issues if issue.lower() in i.fields.summary.lower()]
 
     if not candidates:
         raise Exception("could not find any matching issues")
@@ -593,12 +593,12 @@ def log(ctx, **_):
 ##################################################
 
 
-@spin_it("Getting user id")
+@spinner.run("Getting user id")
 def get_user_id(jira: JIRA) -> Result:
     return Result(result=api.get_current_user_id(jira))
 
 
-@spin_it("Getting issues")
+@spinner.run("Getting issues")
 def get_issues_with_work_logged_on_date(jira: JIRA, report_date: datetime | None) -> Result:
     issues = api.get_issues_by_work_logged_on_date(jira, report_date)
     if report_date is None:
@@ -613,12 +613,14 @@ def get_issues_with_work_logged_on_date(jira: JIRA, report_date: datetime | None
     )
 
 
-@spin_it("Getting worklogs")
+@spinner.run("Getting worklogs")
 def get_user_worklogs_from_date(jira: JIRA, user_email: str, issues: Result) -> Result:
     worklogs = D(counter=0)
     for issue in issues.result:
+        report_date = issues.data.report_date
+        assert type(report_date) == datetime, f"Got unexpected report_date type {type(report_date)}"
         matching: list = api.get_issue_worklogs_by_user_and_date(
-            jira, issue, user_email, issues.data.report_date
+            jira, issue, user_email, report_date
         )
         if matching:
             worklogs[issue.id] = D(key=issue.key, summary=issue.fields.summary, worklogs=matching)

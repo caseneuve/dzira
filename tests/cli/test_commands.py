@@ -9,7 +9,6 @@ import click
 import pytest
 import tabulate
 from click.testing import CliRunner
-from jira.exceptions import JIRAError
 
 from dzira.cli.commands import (
     D,
@@ -28,10 +27,10 @@ from dzira.cli.commands import (
     get_board,
     get_issues,
     get_issues,
+    get_issues,
     get_issues_with_work_logged_on_date,
     get_jira,
     get_sprint,
-    get_issues,
     get_user_id,
     get_user_worklogs_from_date,
     get_worklog,
@@ -382,9 +381,8 @@ class TestGetIssues:
         )
 
 
-
 class TestShowIssues:
-    def setup(self):
+    def setup_method(self, _):
         status = namedtuple("status", ["name"])
         self.sprint = Mock(
             name="Iteration 42",
@@ -583,14 +581,14 @@ class TestLs(CliTest):
 
     @patch.dict(os.environ, {"JIRA_PROJECT_KEY": "XYZ"}, clear=True)
     @patch("dzira.cli.commands.get_issues")
-    def test_has_access_to_context_provided_by_cli_group(self, mock_get_sprint_and_issues, mocker):
+    def test_has_access_to_context_provided_by_cli_group(self, mock_get_issues, mocker):
         mock_config = {"JIRA_PROJECT_KEY": "XYZ", "JIRA_EMAIL": "foo@bar.com"}
         mock_get_config = mocker.patch("dzira.cli.commands.get_config")
         mocker.patch("dzira.cli.commands.get_jira", Mock(return_value=Mock(result=sentinel.jira)))
 
         self.runner.invoke(cli, ["--email", "foo@bar.com", "ls"])
 
-        mock_get_sprint_and_issues.assert_called_once_with(
+        mock_get_issues.assert_called_once_with(
             sentinel.jira, D(state="active", sprint_id=None, **mock_get_config.return_value)
         )
         mock_get_config.assert_called_once_with(config=mock_config)
@@ -882,12 +880,12 @@ class TestEstablishIssue:
     config = {"JIRA_PROJECT_KEY": "XYZ"}
 
     def test_returns_early_if_issue_is_digits_and_key_provided(
-            self, mock_get_sprint_and_issues,
+            self, mock_get_issues,
     ):
         result = establish_issue(Mock(), D(issue="123", **self.config))
 
         assert result == D(issue="XYZ-123", **self.config)
-        mock_get_sprint_and_issues.assert_not_called()
+        mock_get_issues.assert_not_called()
 
     def test_returns_early_if_issue_is_digits_and_board_not_provided(
             self, mock_get_sprint_and_issues,
@@ -898,9 +896,9 @@ class TestEstablishIssue:
         mock_get_sprint_and_issues.assert_not_called()
 
     def test_raises_when_no_matching_issue_in_current_sprint(
-            self, mock_get_sprint_issues
+            self, mock_get_issues
     ):
-        mock_get_sprint_issues.return_value = []
+        mock_get_issues.return_value = Result(result=D(issues=[]))
 
         with pytest.raises(Exception) as exc_info:
             establish_issue(Mock(), D(issue="some description", **self.config))
@@ -908,12 +906,16 @@ class TestEstablishIssue:
         assert "could not find any matching issues" in str(exc_info)
 
     def test_raises_when_more_than_one_matching_issue_in_current_sprint(
-            self, mock_get_sprint_and_issues
+            self, mock_get_issues
     ):
-        mock_get_sprint_and_issues.return_value = [
-            Mock(key="1", fields=Mock(summary="I have some description")),
-            Mock(key="2", fields=Mock(summary="Need some description")),
-        ]
+        mock_get_issues.return_value = Result(
+            result=D(
+                issues=[
+                    Mock(key="1", fields=Mock(summary="I have some description")),
+                    Mock(key="2", fields=Mock(summary="Need some description")),
+                ]
+            )
+        )
 
         with pytest.raises(Exception) as exc_info:
             establish_issue(Mock(), D(issue="some description", **self.config))
@@ -921,12 +923,16 @@ class TestEstablishIssue:
         assert "found more than one matching issue" in str(exc_info)
 
     def test_returns_updated_payload_with_issue_key_when_issue_found_in_the_sprint(
-            self, mock_get_sprint_and_issues,
+            self, mock_get_issues,
     ):
-        mock_get_sprint_and_issues.return_value = [
-            Mock(key="1", fields=Mock(summary="I have some description")),
-            Mock(key="2", fields=Mock(summary="I don't have any matching phrases")),
-        ]
+        mock_get_issues.return_value = Result(
+            result=D(
+                issues=[
+                    Mock(key="1", fields=Mock(summary="I have some description")),
+                    Mock(key="2", fields=Mock(summary="I don't have any matching phrases")),
+                ]
+            )
+        )
 
         result = establish_issue(Mock(), D(issue="some description").update(**self.config))
 
@@ -1038,7 +1044,7 @@ class TestGetIssuesWithWorkLoggedOnDate:
 
 @patch("dzira.cli.commands.api.get_issue_worklogs_by_user_and_date")
 class TestGetUserWorklogsFromDate:
-    def setup(self):
+    def setup_method(self, _):
         self.issue1 = Mock(id=1, key="Issue-1", fields=Mock(summary="Foo bar"))
         self.issue2 = Mock(id=2, key="Issue-2", fields=Mock(summary="Baz quux"))
         self.issues = [self.issue1, self.issue2]
@@ -1091,7 +1097,7 @@ class TestSecondsToHourMinutFmt:
 
 
 class TestShowReport:
-    def setup(self):
+    def setup_method(self, _):
         os.environ["TZ"] = "UTC"
         time.tzset()
         self.user = Mock(accountId="123")
