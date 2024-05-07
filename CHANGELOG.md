@@ -1,5 +1,13 @@
 # Changelog: `dzira`
 
+## [0.3.1](https://github.com/caseneuve/dzira/releases/tag/v0.3.1)
+
+### Fixed
+
+* Getting issue's worklog should not crash when no worklogs found ([#36](https://github.com/caseneuve/dzira/issues/36))
+* API should look only for issues of the authenticated team ([#35](https://github.com/caseneuve/dzira/issues/35))
+
+
 ## [0.3.0](https://github.com/caseneuve/dzira/releases/tag/v0.3.0)
 
 ### Changed
