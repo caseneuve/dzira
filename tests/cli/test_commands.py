@@ -1027,16 +1027,18 @@ class TestGetIssuesWithWorkLoggedOnDate:
         mock_api = mocker.patch("dzira.cli.commands.api.get_issues_by_work_logged_on_date")
         report_date = datetime.datetime(2024, 2, 11, 10, 31)
 
-        result = get_issues_with_work_logged_on_date(sentinel.jira, report_date)
+        result = get_issues_with_work_logged_on_date(
+            sentinel.jira, sentinel.project_key, report_date
+        )
 
         assert result.result == mock_api.return_value
-        mock_api.assert_called_once_with(sentinel.jira, report_date)
+        mock_api.assert_called_once_with(sentinel.jira, sentinel.project_key, report_date)
 
     def test_passes_date_in_data_field_of_result(self, mocker):
         mocker.patch("dzira.cli.commands.api.get_issues_by_work_logged_on_date")
 
         result = get_issues_with_work_logged_on_date(
-            sentinel.jira, datetime.datetime(2023, 11, 25)
+            sentinel.jira, sentinel.project_key, datetime.datetime(2023, 11, 25)
         )
 
         assert result.data.report_date == datetime.datetime(2023, 11, 25)

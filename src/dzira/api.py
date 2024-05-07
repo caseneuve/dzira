@@ -77,28 +77,38 @@ def get_worklog(jira: JIRA, issue: str, worklog_id: str) -> Worklog:
 
 
 def get_issues_by_work_logged_on_date(
-        jira: JIRA, report_date: datetime | None = None, fields="worklog,summary"
+        jira: JIRA,
+        project_key: str,
+        report_date: datetime | None = None,
+        fields: str = "worklog,summary",
 ):
     if report_date is not None:
-        query = f"worklogDate = {report_date:%Y-%m-%d}"
+        date_query = f"worklogDate = {report_date:%Y-%m-%d}"
     else:
-        query = f"worklogDate >= startOfDay()"
+        date_query = f"worklogDate >= startOfDay()"
+    query = f"{date_query} AND project = {project_key!r}"
     return jira.search_issues(query, fields=fields)
 
 
 def get_issue_worklogs_by_user_and_date(
         jira: JIRA, issue: Issue, user_email: str, report_date: datetime
 ) -> list:
-    # can't use `issue.fields.worklog.worklogs` as it fetches only up to 20 worklogs per issue
-    # so we need an extra call to api
-    # issue.fields.worklog.maxResult
-    if len(issue.fields.worklog.worklogs) < 20:
+    matching = []
+
+    try:
+        worklog_count = len(issue.fields.worklog.worklogs)
+    except (AttributeError, TypeError):
+        worklog_count = 0
+
+    if worklog_count == 0:
+        return matching
+    elif worklog_count < 20:
         worklogs = issue.fields.worklog.worklogs
     else:
         worklogs = jira.worklogs(issue.id)
+
     report_date = report_date.astimezone()
 
-    matching = []
     for worklog in worklogs:
         started = datetime.strptime(worklog.started, "%Y-%m-%dT%H:%M:%S.%f%z")
         if worklog.author.emailAddress == user_email and (

@@ -599,8 +599,12 @@ def get_user_id(jira: JIRA) -> Result:
 
 
 @spinner.run("Getting issues")
-def get_issues_with_work_logged_on_date(jira: JIRA, report_date: datetime | None) -> Result:
-    issues = api.get_issues_by_work_logged_on_date(jira, report_date)
+def get_issues_with_work_logged_on_date(
+        jira: JIRA,
+        project_key: str,
+        report_date: datetime | None,
+) -> Result:
+    issues = api.get_issues_by_work_logged_on_date(jira, project_key, report_date)
     if report_date is None:
         report_date = datetime.combine(date.today(), datetime.min.time())
     return Result(
@@ -762,7 +766,7 @@ def report(ctx, report_date, format):
     """
     config = get_config(config=ctx.obj)
     jira = get_jira(config).result
-    issues = get_issues_with_work_logged_on_date(jira, report_date)
+    issues = get_issues_with_work_logged_on_date(jira, config["JIRA_PROJECT_KEY"], report_date)
     if issues.result:
         worklogs = get_user_worklogs_from_date(jira, config["JIRA_EMAIL"], issues).result
     else:
