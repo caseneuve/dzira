@@ -1027,16 +1027,18 @@ class TestGetIssuesWithWorkLoggedOnDate:
         mock_api = mocker.patch("dzira.cli.commands.api.get_issues_by_work_logged_on_date")
         report_date = datetime.datetime(2024, 2, 11, 10, 31)
 
-        result = get_issues_with_work_logged_on_date(sentinel.jira, report_date)
+        result = get_issues_with_work_logged_on_date(
+            sentinel.jira, sentinel.project_key, report_date
+        )
 
         assert result.result == mock_api.return_value
-        mock_api.assert_called_once_with(sentinel.jira, report_date)
+        mock_api.assert_called_once_with(sentinel.jira, sentinel.project_key, report_date)
 
     def test_passes_date_in_data_field_of_result(self, mocker):
         mocker.patch("dzira.cli.commands.api.get_issues_by_work_logged_on_date")
 
         result = get_issues_with_work_logged_on_date(
-            sentinel.jira, datetime.datetime(2023, 11, 25)
+            sentinel.jira, sentinel.project_key, datetime.datetime(2023, 11, 25)
         )
 
         assert result.data.report_date == datetime.datetime(2023, 11, 25)
@@ -1235,7 +1237,9 @@ class TestReport(CliTest):
             mock_get_user_worklogs_from_date,
             mock_show_report
     ):
-        mock_config = mock_get_config.return_value = {"JIRA_EMAIL": sentinel.email}
+        mock_config = mock_get_config.return_value = {
+            "JIRA_EMAIL": sentinel.email, "JIRA_PROJECT_KEY": sentinel.project_key
+        }
         mock_jira = mock_get_jira.return_value.result
 
         result = self.runner.invoke(report, ["--date", "2023-11-26"])
@@ -1245,7 +1249,9 @@ class TestReport(CliTest):
         mock_get_config.assert_called_once()
         mock_get_jira.assert_called_once_with(mock_config)
         mock_get_issues_with_work_logged_on_date.assert_called_once_with(
-            mock_jira, datetime.datetime(2023, 11, 26, 0, 0)
+            mock_jira,
+            sentinel.project_key,
+            datetime.datetime(2023, 11, 26, 0, 0)
         )
         mock_get_user_worklogs_from_date.assert_called_once_with(
             mock_jira,
@@ -1258,7 +1264,7 @@ class TestReport(CliTest):
         )
 
     @patch("dzira.cli.commands.get_jira", Mock(return_value=Mock(result=sentinel.jira)))
-    @patch("dzira.cli.commands.get_config", Mock(return_value=Mock(result=sentinel.user)))
+    @patch("dzira.cli.commands.get_config")
     @patch("dzira.cli.commands.show_report")
     @patch("dzira.cli.commands.get_user_worklogs_from_date")
     @patch("dzira.cli.commands.get_issues_with_work_logged_on_date")
@@ -1266,8 +1272,10 @@ class TestReport(CliTest):
             self,
             mock_get_issues_with_work_logged_on_date,
             mock_get_user_worklogs_from_date,
-            mock_show_report
+            mock_show_report,
+            mock_get_config
     ):
+        mock_get_config.return_value = {"JIRA_EMAIL": "email", "JIRA_PROJECT_KEY": "key"}
         mock_get_issues_with_work_logged_on_date.return_value = Result()
 
         self.runner.invoke(report, ["--date", "2023-11-26"])
@@ -1277,7 +1285,6 @@ class TestReport(CliTest):
 
     @pytest.mark.parametrize("fmt", ["csv", "json", "table"])
     @patch("dzira.cli.commands.get_jira", Mock(return_value=Mock(result=Mock())))
-    @patch("dzira.cli.commands.get_config", Mock(return_value={"JIRA_EMAIL": Mock()}))
     @patch(
         "dzira.cli.commands.get_issues_with_work_logged_on_date",
         Mock(return_value=Result(result=Mock()))
@@ -1286,15 +1293,18 @@ class TestReport(CliTest):
         "dzira.cli.commands.get_user_worklogs_from_date",
         Mock(return_value=Result(result=sentinel.worklogs))
     )
+    @patch("dzira.cli.commands.get_config")
     @patch("dzira.cli.commands.show_report")
-    def test_accepts_format_option(self, mock_show_report, fmt):
+    def test_accepts_format_option(self, mock_show_report, mock_get_config, fmt):
+        mock_get_config.return_value = {"JIRA_EMAIL": "email", "JIRA_PROJECT_KEY": "key"}
+
         result = self.runner.invoke(report, ["--format", fmt])
 
         assert result.exit_code == 0
         mock_show_report.assert_called_once_with(sentinel.worklogs, format=fmt)
 
     @patch("dzira.cli.commands.get_jira", Mock(return_value=Mock(result=sentinel.jira)))
-    @patch("dzira.cli.commands.get_config", Mock(return_value=Mock(result=sentinel.user)))
+    @patch("dzira.cli.commands.get_config", Mock(return_value=Mock(result=Mock())))
     @patch("dzira.cli.commands.show_report")
     @patch("dzira.cli.commands.get_user_worklogs_from_date")
     @patch("dzira.cli.commands.get_issues_with_work_logged_on_date")

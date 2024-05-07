@@ -158,21 +158,28 @@ def test_get_worklog(mock_jira):
 
 def test_get_issues_by_work_logged_on_date_uses_date_and_default_fields(mock_jira):
     report_date = datetime(2024, 2, 11, 10, 24)
+    project_key = "FOO"
 
-    result = get_issues_by_work_logged_on_date(mock_jira, report_date)
+    result = get_issues_by_work_logged_on_date(
+        mock_jira, project_key, report_date
+    )
 
     assert result == mock_jira.search_issues.return_value
     mock_jira.search_issues.assert_called_once_with(
-        "worklogDate = 2024-02-11", fields="worklog,summary"
+        "worklogDate = 2024-02-11 AND project = 'FOO'", fields="worklog,summary"
     )
 
 
 def test_get_issues_by_work_logged_on_date_uses_today_as_fallback(mock_jira):
-    result = get_issues_by_work_logged_on_date(mock_jira, fields=sentinel.fields)
+    project_key = "FOO"
+
+    result = get_issues_by_work_logged_on_date(
+        mock_jira, project_key, fields=sentinel.fields
+    )
 
     assert result == mock_jira.search_issues.return_value
     mock_jira.search_issues.assert_called_once_with(
-        "worklogDate >= startOfDay()", fields=sentinel.fields
+        "worklogDate >= startOfDay() AND project = 'FOO'", fields=sentinel.fields
     )
 
 
@@ -248,6 +255,17 @@ def test_get_issue_worklogs_by_user_and_date_from_jira(mock_jira):
     result = get_issue_worklogs_by_user_and_date(mock_jira, mock_issue, email_address, report_date)
 
     assert result == mock_jira.worklogs.return_value
+
+
+def test_get_issue_worklogs_by_user_and_date_exists_early_when_no_worklogs_found(mock_jira):
+    mock_issue = Mock(fields=Mock())
+
+    result = get_issue_worklogs_by_user_and_date(
+        mock_jira, mock_issue, sentinel.email_address, sentinel.report_date
+    )
+
+    assert result == []
+    assert not mock_jira.worklogs.called
 
 
 def test_search_issues_with_sprint_info_uses_sprint_id(mock_jira):
