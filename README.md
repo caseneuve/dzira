@@ -165,7 +165,7 @@ Options:
                          --start option, if present, or current time will be used
   -c, --comment TEXT     Comment added to logged time
   -w, --worklog INTEGER  Id of the worklog to be updated
-  --spin / --no-spin
+  --delete               Delete worklog (works with --worklog)
   -h, --help             Show this message and exit.
 ```
 

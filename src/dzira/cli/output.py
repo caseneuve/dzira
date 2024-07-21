@@ -48,7 +48,7 @@ class Spinner:
         connector = ":\t"
 
         def decorator(func):
-            func.is_decorated_with_spin_it = True
+            func.is_decorated_with_spinner = True
 
             @wraps(func)
             def wrapper(*args, **kwargs):
@@ -69,7 +69,9 @@ class Spinner:
 
                         r: Result = future.result()
                         print(
-                            self.colorizer("\r", "^green", done, separator, msg, "^reset", connector, r.stdout),
+                            self.colorizer(
+                                "\r", "^green", done, separator, msg, "^reset", connector, r.stdout
+                            ),
                             flush=True,
                             file=sys.stderr
                         )
@@ -81,7 +83,8 @@ class Spinner:
                             error_msg = " ".join(messages)
                         else:
                             error_msg = (
-                                f"failed not perform the request while trying to {func.__name__.replace('_', ' ')}"
+                                "failed not perform the request while trying to "
+                                f"{func.__name__.replace('_', ' ')}"
                                 " (no error supplied by JIRA) :("
                             )
                     else:

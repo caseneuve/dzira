@@ -5,17 +5,23 @@ import time
 from collections import namedtuple
 from unittest.mock import Mock, PropertyMock, call, patch, sentinel
 
+if sys.version_info > (3, 9):
+    from zoneinfo import ZoneInfo
+else:
+    def ZoneInfo(*args, **kwargs): ...
+
 import click
 import pytest
 import tabulate
+import time_machine
 from click.testing import CliRunner
 
 from dzira.cli.commands import (
     D,
     DEFAULT_OUTPUT_FORMAT,
+    Result,
     VALIDATE_DATE_FORMATS,
     VALID_OUTPUT_FORMATS,
-    Result,
     _seconds_to_hour_minute_fmt,
     _update_worklog,
     add_worklog,
@@ -23,6 +29,7 @@ from dzira.cli.commands import (
     calculate_seconds,
     cli,
     colors,
+    delete_worklog,
     establish_issue,
     get_board,
     get_issues,
@@ -141,7 +148,7 @@ class TestGetJira:
     config = D({"JIRA_SERVER": "server", "JIRA_EMAIL": "email", "JIRA_TOKEN": "token"})
 
     def test_is_decorated_correctly(self):
-        assert get_jira.is_decorated_with_spin_it
+        assert get_jira.is_decorated_with_spinner
 
     def test_returns_result(self, mock_connect_to_jira):
         result = get_jira(self.config)
@@ -160,7 +167,7 @@ class TestGetJira:
 
 class TestGetBoard:
     def test_is_decorated_correctly(self):
-        assert get_board.is_decorated_with_spin_it
+        assert get_board.is_decorated_with_spinner
 
     def test_gets_board(self, mock_get_board_by_key):
         mock_jira = Mock()
@@ -175,7 +182,7 @@ class TestGetBoard:
 
 class TestGetSprint:
     def test_is_decorated_correctly(self):
-        assert get_sprint.is_decorated_with_spin_it
+        assert get_sprint.is_decorated_with_spinner
 
     def test_finds_sprint_from_id(self, mock_get_sprint_by_id, mock_process_sprint_out):
         mock_payload = D(sprint_id=sentinel.sprint_id)
@@ -237,18 +244,32 @@ class TestAddWorklog:
 
 class TestGetWorklog:
     def test_is_decorated_correctly(self):
-        assert get_worklog.is_decorated_with_spin_it
+        assert get_worklog.is_decorated_with_spinner
 
     @patch("dzira.cli.commands.datetime", Mock())
-    def test_returns_worklog(self, mocker):
+    def test_returns_worklog_if_matches_the_authenticated_user_by_email(self, mocker):
         mock_api = mocker.patch("dzira.cli.commands.api.get_worklog")
+        mock_api.return_value = Mock(author=Mock(emailAddress=sentinel.email))
 
-        result = get_worklog(sentinel.jira, issue="123", worklog_id=999)
+        result = get_worklog(
+            sentinel.jira, issue="123", worklog_id=999, **{"JIRA_EMAIL": sentinel.email}
+        )
 
         assert type(result) == Result
         assert result.result == mock_api.return_value
         mock_api.assert_called_once_with(sentinel.jira, issue="123", worklog_id="999")
 
+
+    @patch("dzira.cli.commands.datetime", Mock())
+    def test_raises_if_worklog_does_not_match_the_authenticated_user_by_email(self, mocker):
+        mock_api = mocker.patch("dzira.cli.commands.api.get_worklog")
+        mock_api.return_value = Mock(author=Mock(emailAddress="bar", displayName="Author"))
+
+        with pytest.raises(Exception) as exc:
+            get_worklog(sentinel.jira, issue="123", worklog_id=999, **{"JIRA_EMAIL": "foo"})
+
+        mock_api.assert_called_once_with(sentinel.jira, issue="123", worklog_id="999")
+        assert "Found worklog created by a different author (Author), skipping!" in str(exc)
 
 
 class TestUpdateWorklogPrivate:
@@ -274,7 +295,7 @@ class TestUpdateWorklogPrivate:
 
 class TestUpdateWorklogPublic:
     def test_is_decorated_correctly(self):
-        assert update_worklog.is_decorated_with_spin_it
+        assert update_worklog.is_decorated_with_spinner
 
     def test_calls_private_function_and_wraps_the_result(self, mocker):
         mock_worklog = Mock(id="42")
@@ -285,6 +306,29 @@ class TestUpdateWorklogPublic:
         mock_private.assert_called_once_with(mock_worklog, "3600", "blah!", None)
         assert type(result) == Result
         assert "updated" in result.stdout
+
+
+class TestDeleteWorklog:
+    def setup_method(self, _):
+        self.worklog = Mock(author=Mock(emailAddress="foo@bar.com"), delete=Mock())
+
+    def test_is_decorated_correctly(self):
+        assert delete_worklog.is_decorated_with_spinner
+
+    @patch.dict(os.environ, {"JIRA_EMAIL": "foo@bar.com"}, clear=True)
+    def test_deletes_worklog_and_returns_result(self):
+        result = delete_worklog(self.worklog, JIRA_EMAIL="foo@bar.com")
+
+        assert isinstance(result, Result)
+        self.worklog.delete.assert_called_once()
+
+    @patch.dict(os.environ, {"JIRA_EMAIL": "foo@bar.com"}, clear=True)
+    def test_raises_when_worklog_author_does_not_match_configured_user(self):
+        with pytest.raises(Exception) as exc_info:
+            delete_worklog(self.worklog, JIRA_EMAIL="baz@quux.com")
+
+        assert not self.worklog.delete.called
+        assert "Can't delete worklog created by a different user!" in str(exc_info.value)
 
 
 class TestCalculateSeconds:
@@ -309,35 +353,20 @@ class TestCalculateSeconds:
     def test_returns_seconds_delta_of_end_and_start(self, start, end, expected):
         assert calculate_seconds(D(start=start, end=end))["seconds"] == expected
 
-    def test_returns_seconds_delta_of_start_and_now_when_end_is_none(self, mocker):
-        mock_datetime = mocker.patch("dzira.cli.commands.datetime")
-        start = "8:00"
-        fake_now = "8:07"
-        mock_datetime.strptime.side_effect = [
-            datetime.datetime.strptime(fake_now, "%H:%M"),
-            datetime.datetime.strptime(start, "%H:%M")
-        ]
-        assert calculate_seconds(D(start=start, end=None))["seconds"] == 7 * 60
+    @pytest.mark.skipif(sys.version_info < (3, 9), reason="requires python3.9 or higher")
+    @time_machine.travel(datetime.datetime(2023, 11, 23, 8, 7, tzinfo=ZoneInfo("Europe/Warsaw")))
+    def test_returns_seconds_delta_of_start_and_now_when_end_is_none(self):
+        assert calculate_seconds(D(start="8:00", end=None))["seconds"] == 7 * 60
 
-    def test_accepts_multiple_separators_in_input(self, mocker):
-        mock_sub = mocker.patch("dzira.cli.commands.re.sub")
-        mock_datetime = mocker.patch("dzira.cli.commands.datetime")
-        mock_datetime.strptime.return_value.__gt__ = Mock(return_value=False)
+    @pytest.mark.skipif(sys.version_info < (3, 9), reason="requires python3.9 or higher")
+    @time_machine.travel(datetime.datetime(2023, 11, 23, 8, 7, tzinfo=ZoneInfo("Europe/Warsaw")))
+    @pytest.mark.parametrize("start,end", [("2,10", "3.01"), ("2:10", "3h01")])
+    def test_accepts_multiple_separators_in_input(self, start, end):
+        result = calculate_seconds(D(start=start, end=end))
 
-        calculate_seconds(D(start="2,10", end="3.01"))
+        assert result["seconds"] == 3060
 
-        mock_sub.assert_has_calls(
-            [call("[,.h]", ":", "3.01"), call("[,.h]", ":", "2,10")]
-        )
-        assert mock_datetime.strptime.call_args_list == [
-            call(mock_sub.return_value, "%H:%M"),
-            call(mock_sub.return_value, "%H:%M"),
-        ]
-
-    def test_raises_when_end_time_prior_than_start_time(self, mocker):
-        mock_datetime = mocker.patch("dzira.cli.commands.datetime")
-        mock_datetime.strptime.return_value.__gt__ = Mock(return_value=True)
-
+    def test_raises_when_end_time_prior_than_start_time(self):
         with pytest.raises(click.BadParameter) as exc_info:
             calculate_seconds(D(start="18h00", end="8h00"))
 
@@ -361,7 +390,7 @@ class TestProcessSprintOut:
 
 class TestGetIssues:
     def test_is_decorated_correctly(self):
-        assert get_issues.is_decorated_with_spin_it
+        assert get_issues.is_decorated_with_spinner
 
     def test_gets_sprint_and_issues_using_api(self, mocker, mock_process_sprint_out):
         mock_api = mocker.patch("dzira.cli.commands.api.search_issues_with_sprint_info")
@@ -763,89 +792,48 @@ class TestValidateDate:
     def test_returns_early_when_date_is_none(self):
         assert validate_date(Mock(), Mock(), None) is None
 
-    def test_uses_start_time_when_not_provided_in_date_option(self, mocker):
+    @pytest.mark.skipif(sys.version_info < (3, 9), reason="requires python3.9 or higher")
+    @time_machine.travel(datetime.datetime(2023, 11, 23, 14, 0, 0, tzinfo=ZoneInfo("Europe/Warsaw")))
+    def test_uses_start_time_when_not_provided_in_date_option(self):
         mock_ctx = Mock(params={"start": "13:42"})
-        mock_datetime = mocker.patch("dzira.cli.commands.datetime")
-        mock_isinstance = mocker.patch("dzira.cli.commands.isinstance")
-        mocker.patch("dzira.cli.commands.VALIDATE_DATE_FORMATS", ["%Y-%m-%d %H:%M"])
-        mock_isinstance.return_value = True
-        mock_datetime.strptime.return_value = datetime.datetime(2023, 11, 23, 13, 42)
-        mock_datetime.now.return_value = datetime.datetime(2023, 11, 24, 18, 0)
-        mock_datetime.utcnow.return_value\
-            .astimezone.return_value\
-            .utcoffset.return_value = None
 
         result = validate_date(mock_ctx, Mock(), "2023-11-23")
 
-        assert result == datetime.datetime(2023, 11, 23, 13, 42)
-        mock_datetime.strptime.assert_called_once_with("2023-11-23 13:42", "%Y-%m-%d %H:%M")
+        assert result == datetime.datetime(2023, 11, 23, 12, 42)
 
-    def test_adds_current_time_when_only_date_provided_in_the_option(self, mocker):
-        mocker.patch("dzira.cli.commands.isinstance", Mock(return_value=True))
-        mock_datetime = mocker.patch("dzira.cli.commands.datetime")
-        mock_given_date = datetime.datetime(2023, 11, 23, 0, 0)
-        mock_datetime.strptime.return_value = mock_given_date
-        mock_now = datetime.datetime(2023, 11, 24, 18, 5, 43)
-        mock_datetime.now.return_value = mock_now
-        mock_delta = datetime.timedelta(seconds=3600)
-        mock_datetime.utcnow.return_value\
-            .astimezone.return_value\
-            .utcoffset.return_value = mock_delta
-        mock_combine = datetime.datetime(2023, 11, 23, 18, 5, 43)
-        mock_datetime.combine.return_value = mock_combine
+    @pytest.mark.skipif(sys.version_info < (3, 9), reason="requires python3.9 or higher")
+    @time_machine.travel(datetime.datetime(2023, 11, 23, 14, 0, 0, tzinfo=ZoneInfo("Europe/Warsaw")))
+    def test_adds_current_time_when_only_date_provided_in_the_option(self):
+        result = validate_date(Mock(params={}), Mock(), "2023-11-23")
 
-        result = validate_date(Mock(), Mock(), "2023-11-23")
+        assert result == datetime.datetime(2023, 11, 23, 13, 0, 0)
 
-        assert result == mock_combine - mock_delta
-        mock_datetime.combine.assert_called_once_with(mock_datetime.date.return_value, mock_now.time())
-        mock_datetime.date.assert_called_once_with(mock_given_date)
-
-
-    def test_validates_against_multiple_formats_and_raises_when_none_matches(self, mocker):
-        mocker.patch("dzira.cli.commands.isinstance", Mock(return_value=False))
-        mock_datetime = mocker.patch("dzira.cli.commands.datetime")
-        mock_datetime.strptime.side_effect = 3 * [ValueError]
-
+    def test_validates_against_multiple_formats_and_raises_when_none_matches(self):
         with pytest.raises(click.BadParameter) as exc_info:
             validate_date(Mock(), Mock(), "foo")
 
         assert "date has to match one of supported ISO formats" in str(exc_info)
         assert ", ".join(VALIDATE_DATE_FORMATS) in str(exc_info)
-        for fmt in VALIDATE_DATE_FORMATS:
-            mock_datetime.strptime.assert_has_calls([call("foo", fmt)])
 
-    def test_raises_when_date_in_future(self, mocker):
-        mocker.patch("dzira.cli.commands.isinstance", Mock(return_value=True))
-        mock_datetime = mocker.patch("dzira.cli.commands.datetime")
-        mock_datetime.strptime.side_effect = [ValueError, datetime.datetime(2055, 11, 23, 13, 42)]
-        mock_datetime.now.return_value = datetime.datetime(2023, 11, 24, 18, 0)
-
+    @pytest.mark.skipif(sys.version_info < (3, 9), reason="requires python3.9 or higher")
+    @time_machine.travel(datetime.datetime(2023, 11, 23, 10, 0, 0, tzinfo=ZoneInfo("Europe/Warsaw")))
+    def test_raises_when_date_in_future(self):
         with pytest.raises(click.BadParameter) as exc_info:
             validate_date(Mock(), Mock(), "2055-11-23T13:42")
 
         assert "worklog date cannot be in future" in str(exc_info)
 
-    def test_raises_when_date_older_than_2_weeks(self, mocker):
-        mocker.patch("dzira.cli.commands.isinstance", Mock(return_value=True))
-        mock_datetime = mocker.patch("dzira.cli.commands.datetime")
-        mock_datetime.strptime.side_effect = [ValueError, datetime.datetime(1055, 11, 23, 13, 42)]
-        mock_datetime.now.return_value = datetime.datetime(2023, 11, 24, 18, 0)
-
+    @time_machine.travel(datetime.datetime(2023, 11, 23, 10, 0, 0, tzinfo=ZoneInfo("Europe/Warsaw")))
+    def test_raises_when_date_older_than_2_weeks(self):
         with pytest.raises(click.BadParameter) as exc_info:
             validate_date(Mock(), Mock(), "1055-11-23T13:42")
 
         assert "worklog date cannot be older than 2 weeks" in str(exc_info)
 
-    def test_tries_to_convert_date_to_timezone_aware(self, mocker):
-        mocker.patch("dzira.cli.commands.isinstance", Mock(return_value=True))
-        mock_datetime = mocker.patch("dzira.cli.commands.datetime")
-        mock_datetime.strptime.side_effect = [ValueError, datetime.datetime(2023, 11, 23, 13, 42)]
-        mock_datetime.now.return_value = datetime.datetime(2023, 11, 24, 18, 0)
-        mock_datetime.utcnow.return_value\
-            .astimezone.return_value\
-            .utcoffset.return_value = datetime.timedelta(seconds=3600)
-
-        result = validate_date(Mock(), Mock(), "2023-11-23T13:42")
+    @pytest.mark.skipif(sys.version_info < (3, 9), reason="requires python3.9 or higher")
+    @time_machine.travel(datetime.datetime(2023, 11, 23, 14, 0, 0, tzinfo=ZoneInfo("Europe/Warsaw")))
+    def test_tries_to_convert_date_to_timezone_aware(self):
+        result = validate_date(Mock(params={}), Mock(), "2023-11-23T13:42")
 
         assert result == datetime.datetime(2023, 11, 23, 12, 42)
 
@@ -855,16 +843,44 @@ class TestSanitizeParams:
         with pytest.raises(click.UsageError) as exc_info:
             sanitize_params(D(worklog_id=999))
 
-        assert "to update a worklog, either time spent or a comment is needed" in str(exc_info)
+        assert (
+            "to update / delete a worklog, either time spent, comment, or delete flag is needed"
+            in str(exc_info)
+        )
 
     def test_raises_when_no_time_or_start(self):
         with pytest.raises(click.UsageError) as exc_info:
             sanitize_params(D())
 
-        assert "cannot spend without knowing working time or when work has started" in str(exc_info)
+        assert (
+            "cannot spend without knowing working time or when work has started"
+            in str(exc_info)
+        )
+
+    def test_raises_when_no_worklog_id_with_delete_flag(self):
+        with pytest.raises(click.UsageError) as exc_info:
+            sanitize_params(D(delete_worklog=True))
+
+        assert (
+            "use --worklog option to provide the id of the worklog you want to delete"
+            in str(exc_info)
+        )
+
+    def test_returns_args_when_worklog_id_and_delete_flag(self):
+        args = D(worklog_id="123", delete_worklog=True, time=validate_time(None, None, "42m"))
+        original_args = D(args)
+
+        result = sanitize_params(args)
+
+        assert result == original_args
 
     @pytest.mark.parametrize(
-        "args", [D(time="42m"), D(start="8:30"), D(worklog_id="999", comment="asdf")]
+        "args",
+        [
+            D(time="42m", delete_worklog=False),
+            D(start="8:30", delete_worklog=False),
+            D(worklog_id="999", comment="asdf", delete_worklog=False)
+        ]
     )
     def test_updates_seconds_when_proper_args_provided(self, mocker, args):
         mock_calculate_seconds = mocker.patch("dzira.cli.commands.calculate_seconds")
@@ -939,31 +955,57 @@ class TestEstablishIssue:
         assert result == D(issue="1", **self.config)
 
 
+@patch("dzira.cli.commands.delete_worklog")
+@patch("dzira.cli.commands.add_worklog")
+@patch("dzira.cli.commands.update_worklog")
+@patch("dzira.cli.commands.get_worklog")
 class TestPerformLogAction:
-    def test_returns_update_worklog_if_worklog_id_provided(self, mocker):
-        mock_get_worklog = mocker.patch("dzira.cli.commands.get_worklog")
-        mock_update_worklog = mocker.patch("dzira.cli.commands.update_worklog")
-        payload = D(issue=sentinel.issue, worklog_id=sentinel.worklog)
+    def setup_method(self, _):
+        self.payload = D(issue=sentinel.issue, worklog_id=sentinel.worklog, delete_worklog=False)
 
-        perform_log_action(sentinel.jira, payload)
+    def test_runs_update_worklog_if_worklog_id_provided_but_delete_flag_absent(
+            self, mock_get_worklog, mock_update_worklog, mock_add_worklog, mock_delete_worklog
+    ):
+        perform_log_action(sentinel.jira, self.payload)
 
         mock_get_worklog.assert_called_once_with(
-            sentinel.jira, issue=sentinel.issue, worklog_id=sentinel.worklog
+            sentinel.jira, issue=sentinel.issue, worklog_id=sentinel.worklog, delete_worklog=False
         )
         mock_update_worklog.assert_called_once_with(
             mock_get_worklog.return_value.result,
-            **payload
+            **self.payload
         )
+        assert not mock_add_worklog.called
+        assert not mock_delete_worklog.called
 
-    def test_returns_add_worklog_if_worklog_id_not_provided(self, mocker):
-        mock_get_worklog = mocker.patch("dzira.cli.commands.get_worklog")
-        mock_add_worklog = mocker.patch("dzira.cli.commands.add_worklog")
-        payload = D(issue=sentinel.issue, worklog_id=None)
+    def test_runs_delete_worklog_if_worklog_id_provided_with_delete_flag(
+            self, mock_get_worklog, mock_update_worklog, mock_add_worklog, mock_delete_worklog
+    ):
+        self.payload.update(delete_worklog=True)
 
-        perform_log_action(sentinel.jira, payload)
+        perform_log_action(sentinel.jira, self.payload)
+
+        mock_get_worklog.assert_called_once_with(
+            sentinel.jira, issue=sentinel.issue, worklog_id=sentinel.worklog, delete_worklog=True
+        )
+        mock_delete_worklog.assert_called_once_with(
+            mock_get_worklog.return_value.result,
+            **self.payload
+        )
+        assert not mock_add_worklog.called
+        assert not mock_update_worklog.called
+
+    def test_runs_add_worklog_if_worklog_id_not_provided(
+            self, mock_get_worklog, mock_update_worklog, mock_add_worklog, mock_delete_worklog
+    ):
+        self.payload.update(worklog_id=None)
+
+        perform_log_action(sentinel.jira, self.payload)
 
         mock_get_worklog.assert_not_called()
-        mock_add_worklog.assert_called_once_with(sentinel.jira, **payload)
+        mock_add_worklog.assert_called_once_with(sentinel.jira, **self.payload)
+        assert not mock_delete_worklog.called
+        assert not mock_update_worklog.called
 
 
 class TestLog(CliTest):
@@ -1006,7 +1048,7 @@ class TestLog(CliTest):
 
 class TestGetUser:
     def test_is_decorated_correctly(self):
-        assert get_user_id.is_decorated_with_spin_it
+        assert get_user_id.is_decorated_with_spinner
 
     def test_uses_api_and_returns_correct_data(self, mocker):
         mock_jira = Mock()
@@ -1021,7 +1063,7 @@ class TestGetUser:
 
 class TestGetIssuesWithWorkLoggedOnDate:
     def test_is_decorated_correctly(self):
-        assert get_issues_with_work_logged_on_date.is_decorated_with_spin_it
+        assert get_issues_with_work_logged_on_date.is_decorated_with_spinner
 
     def test_calls_api_to_get_issues(self, mocker):
         mock_api = mocker.patch("dzira.cli.commands.api.get_issues_by_work_logged_on_date")
@@ -1052,7 +1094,7 @@ class TestGetUserWorklogsFromDate:
         self.issues = [self.issue1, self.issue2]
 
     def test_is_decorated_correctly(self, _):
-        assert get_user_worklogs_from_date.is_decorated_with_spin_it
+        assert get_user_worklogs_from_date.is_decorated_with_spinner
 
     def test_uses_api_to_fetch_worklogs(self, mock_api):
         report_date = datetime.datetime(2023, 11, 26, 0, 0)

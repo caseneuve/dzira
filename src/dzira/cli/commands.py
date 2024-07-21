@@ -98,13 +98,17 @@ def add_worklog(
 
 
 @spinner.run("Getting worklog")
-def get_worklog(jira: JIRA, issue: str, worklog_id: str | int, **_) -> Result:
+def get_worklog(jira: JIRA, issue: str, worklog_id: str | int, **data) -> Result:
     work_log: Worklog = api.get_worklog(jira, issue=issue, worklog_id=str(worklog_id))
+    author = work_log.author
+
+    if work_log.author.emailAddress != data["JIRA_EMAIL"]:
+        raise Exception(f"Found worklog created by a different author ({author.displayName}), skipping!")
+
     created = datetime.strptime(
         work_log.created, "%Y-%m-%dT%H:%M:%S.%f%z"
     ).astimezone().strftime("%a, %b %d, %H:%M:%S")
-    author = work_log.author.displayName
-    return Result(result=work_log, stdout=f"{work_log.id}, created by {author} on {created}")
+    return Result(result=work_log, stdout=f"{work_log.id}, created by {author.displayName} on {created}")
 
 
 def _update_worklog(
@@ -124,7 +128,6 @@ def _update_worklog(
 
 
 # TODO: we can't update worklog to change the issue
-# * add delete option to worklog !!!
 @spinner.run("Updating worklog")
 def update_worklog(
         worklog: Worklog, time: str, comment: str, date: datetime | None = None, **_
@@ -136,6 +139,14 @@ def update_worklog(
             k = "timeSpent"
         info.update(k, worklog.raw[k])
     return Result(stdout=f"updated: {info}")
+
+
+@spinner.run("Deleting worklog")
+def delete_worklog(worklog: Worklog, **payload) -> Result:
+    if payload["JIRA_EMAIL"] != worklog.author.emailAddress:
+        raise Exception("Can't delete worklog created by a different user!")
+    worklog.delete()
+    return Result(stdout="done!")
 
 
 ##################################################
@@ -416,43 +427,51 @@ def validate_date(ctx, _, value):
     if value is None:
         return
 
-    if re.match(r"^\d{4}-\d{2}-\d{2}$", value) and (start:=ctx.params.get("start")) is not None:
-        value = f"{value} {start}"
+    if re.match(r"^\d{4}-\d{2}-\d{2}$", value):
+        if (start:=ctx.params.get("start")) is not None:
+            value = f"{value} {start}"
 
-    given_date = None
+    given_datetime = None
+    now = datetime.now()
     for fmt in VALIDATE_DATE_FORMATS:
         try:
-            given_date = datetime.strptime(value, fmt)
+            given_datetime = datetime.strptime(value, fmt)
             if fmt == "%Y-%m-%d":
-                given_date = datetime.combine(datetime.date(given_date), datetime.now().time())
+                given_datetime = datetime.combine(datetime.date(given_datetime), now.time())
             break
         except ValueError:
             pass
 
-    if not isinstance(given_date, datetime):
+    if not isinstance(given_datetime, datetime):
         raise click.BadParameter(
             f"date has to match one of supported ISO formats: {', '.join(VALIDATE_DATE_FORMATS)}"
         )
-    now = datetime.now()
-    if given_date > now:
+    if given_datetime > now:
         raise click.BadParameter("worklog date cannot be in future!")
-    if (now - given_date).days > 14:
+    if (now - given_datetime).days > 14:
         raise click.BadParameter("worklog date cannot be older than 2 weeks!")
 
-    if (utc_offset:=datetime.utcnow().astimezone().utcoffset()):
-        return given_date - utc_offset
+    if (utc_offset:=now.astimezone().utcoffset()):
+        return given_datetime - utc_offset
     else:
-        return given_date
+        return given_datetime
 
 
 def sanitize_params(args: D) -> D:
-    time, start, worklog_id, comment = args("time", "start", "worklog_id", "comment")
+    time, start, worklog_id, comment, delete_worklog = args(
+        "time", "start", "worklog_id", "comment", "delete_worklog"
+    )
+
+    if worklog_id and delete_worklog:
+        return args
 
     if (time or start) or (worklog_id and comment):
         return calculate_seconds(args)
 
     if worklog_id and (comment is None):
-        msg = "to update a worklog, either time spent or a comment is needed"
+        msg = "to update / delete a worklog, either time spent, comment, or delete flag is needed"
+    elif delete_worklog and worklog_id is None:
+        msg = "use --worklog option to provide the id of the worklog you want to delete"
     else:
         msg = (
             "cannot spend without knowing working time or when work has started: \n"
@@ -467,7 +486,8 @@ def calculate_seconds(payload: D) -> D:
     start, end = payload("start", "end")
 
     if start is None:
-        return payload.update("seconds", payload.get("time"))
+        time = payload.get("time")
+        return payload.update("seconds", time)
 
     fmt = "%H:%M"
     unify = lambda t: datetime.strptime(re.sub(r"[,.h]", ":", t), fmt)
@@ -506,7 +526,10 @@ def establish_issue(jira: JIRA, payload: D) -> D:
 def perform_log_action(jira: JIRA, payload: D) -> None:
     if payload["worklog_id"] is not None:
         worklog: Worklog = get_worklog(jira, **payload).result
-        update_worklog(worklog, **payload)
+        if payload["delete_worklog"]:
+            delete_worklog(worklog, **payload)
+        else:
+            update_worklog(worklog, **payload)
     else:
         add_worklog(jira, **payload)
 
@@ -552,6 +575,14 @@ def perform_log_action(jira: JIRA, payload: D) -> None:
 @click.option("-c", "--comment", help="Comment added to logged time")
 @click.option(
     "-w", "--worklog", "worklog_id", type=int, help="Id of the worklog to be updated"
+)
+@click.option(
+    "--delete",
+    "delete_worklog",
+    help="Delete worklog (works with --worklog)",
+    is_flag=True,
+    default=False,
+    show_default=True
 )
 @click.help_option("-h", "--help")
 def log(ctx, **_):
