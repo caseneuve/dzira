@@ -23,6 +23,7 @@ from dzira.cli.commands import (
     calculate_seconds,
     cli,
     colors,
+    delete_worklog,
     establish_issue,
     get_board,
     get_issues,
@@ -240,15 +241,29 @@ class TestGetWorklog:
         assert get_worklog.is_decorated_with_spin_it
 
     @patch("dzira.cli.commands.datetime", Mock())
-    def test_returns_worklog(self, mocker):
+    def test_returns_worklog_if_matches_the_authenticated_user_by_email(self, mocker):
         mock_api = mocker.patch("dzira.cli.commands.api.get_worklog")
+        mock_api.return_value = Mock(author=Mock(emailAddress=sentinel.email))
 
-        result = get_worklog(sentinel.jira, issue="123", worklog_id=999)
+        result = get_worklog(
+            sentinel.jira, issue="123", worklog_id=999, **{"JIRA_EMAIL": sentinel.email}
+        )
 
         assert type(result) == Result
         assert result.result == mock_api.return_value
         mock_api.assert_called_once_with(sentinel.jira, issue="123", worklog_id="999")
 
+
+    @patch("dzira.cli.commands.datetime", Mock())
+    def test_raises_if_worklog_does_not_match_the_authenticated_user_by_email(self, mocker):
+        mock_api = mocker.patch("dzira.cli.commands.api.get_worklog")
+        mock_api.return_value = Mock(author=Mock(emailAddress="bar", displayName="Author"))
+
+        with pytest.raises(Exception) as exc:
+            get_worklog(sentinel.jira, issue="123", worklog_id=999, **{"JIRA_EMAIL": "foo"})
+
+        mock_api.assert_called_once_with(sentinel.jira, issue="123", worklog_id="999")
+        assert "Found worklog created by a different author (Author), skipping!" in str(exc)
 
 
 class TestUpdateWorklogPrivate:
@@ -285,6 +300,29 @@ class TestUpdateWorklogPublic:
         mock_private.assert_called_once_with(mock_worklog, "3600", "blah!", None)
         assert type(result) == Result
         assert "updated" in result.stdout
+
+
+class TestDeleteWorklog:
+    def setup_method(self, _):
+        self.worklog = Mock(author=Mock(emailAddress="foo@bar.com"), delete=Mock())
+
+    def test_is_decorated_correctly(self):
+        assert delete_worklog.is_decorated_with_spinner
+
+    @patch.dict(os.environ, {"JIRA_EMAIL": "foo@bar.com"}, clear=True)
+    def test_deletes_worklog_and_returns_result(self):
+        result = delete_worklog(self.worklog, JIRA_EMAIL="foo@bar.com")
+
+        assert isinstance(result, Result)
+        self.worklog.delete.assert_called_once()
+
+    @patch.dict(os.environ, {"JIRA_EMAIL": "foo@bar.com"}, clear=True)
+    def test_raises_when_worklog_author_does_not_match_configured_user(self):
+        with pytest.raises(Exception) as exc_info:
+            delete_worklog(self.worklog, JIRA_EMAIL="baz@quux.com")
+
+        assert not self.worklog.delete.called
+        assert "Can't delete worklog created by a different user!" in str(exc_info.value)
 
 
 class TestCalculateSeconds:
@@ -855,16 +893,44 @@ class TestSanitizeParams:
         with pytest.raises(click.UsageError) as exc_info:
             sanitize_params(D(worklog_id=999))
 
-        assert "to update a worklog, either time spent or a comment is needed" in str(exc_info)
+        assert (
+            "to update / delete a worklog, either time spent, comment, or delete flag is needed"
+            in str(exc_info)
+        )
 
     def test_raises_when_no_time_or_start(self):
         with pytest.raises(click.UsageError) as exc_info:
             sanitize_params(D())
 
-        assert "cannot spend without knowing working time or when work has started" in str(exc_info)
+        assert (
+            "cannot spend without knowing working time or when work has started"
+            in str(exc_info)
+        )
+
+    def test_raises_when_no_worklog_id_with_delete_flag(self):
+        with pytest.raises(click.UsageError) as exc_info:
+            sanitize_params(D(delete_worklog=True))
+
+        assert (
+            "use --worklog option to provide the id of the worklog you want to delete"
+            in str(exc_info)
+        )
+
+    def test_returns_args_when_worklog_id_and_delete_flag(self):
+        args = D(worklog_id="123", delete_worklog=True, time=validate_time(None, None, "42m"))
+        original_args = D(args)
+
+        result = sanitize_params(args)
+
+        assert result == original_args
 
     @pytest.mark.parametrize(
-        "args", [D(time="42m"), D(start="8:30"), D(worklog_id="999", comment="asdf")]
+        "args",
+        [
+            D(time="42m", delete_worklog=False),
+            D(start="8:30", delete_worklog=False),
+            D(worklog_id="999", comment="asdf", delete_worklog=False)
+        ]
     )
     def test_updates_seconds_when_proper_args_provided(self, mocker, args):
         mock_calculate_seconds = mocker.patch("dzira.cli.commands.calculate_seconds")
@@ -939,31 +1005,57 @@ class TestEstablishIssue:
         assert result == D(issue="1", **self.config)
 
 
+@patch("dzira.cli.commands.delete_worklog")
+@patch("dzira.cli.commands.add_worklog")
+@patch("dzira.cli.commands.update_worklog")
+@patch("dzira.cli.commands.get_worklog")
 class TestPerformLogAction:
-    def test_returns_update_worklog_if_worklog_id_provided(self, mocker):
-        mock_get_worklog = mocker.patch("dzira.cli.commands.get_worklog")
-        mock_update_worklog = mocker.patch("dzira.cli.commands.update_worklog")
-        payload = D(issue=sentinel.issue, worklog_id=sentinel.worklog)
+    def setup_method(self, _):
+        self.payload = D(issue=sentinel.issue, worklog_id=sentinel.worklog, delete_worklog=False)
 
-        perform_log_action(sentinel.jira, payload)
+    def test_runs_update_worklog_if_worklog_id_provided_but_delete_flag_absent(
+            self, mock_get_worklog, mock_update_worklog, mock_add_worklog, mock_delete_worklog
+    ):
+        perform_log_action(sentinel.jira, self.payload)
 
         mock_get_worklog.assert_called_once_with(
-            sentinel.jira, issue=sentinel.issue, worklog_id=sentinel.worklog
+            sentinel.jira, issue=sentinel.issue, worklog_id=sentinel.worklog, delete_worklog=False
         )
         mock_update_worklog.assert_called_once_with(
             mock_get_worklog.return_value.result,
-            **payload
+            **self.payload
         )
+        assert not mock_add_worklog.called
+        assert not mock_delete_worklog.called
 
-    def test_returns_add_worklog_if_worklog_id_not_provided(self, mocker):
-        mock_get_worklog = mocker.patch("dzira.cli.commands.get_worklog")
-        mock_add_worklog = mocker.patch("dzira.cli.commands.add_worklog")
-        payload = D(issue=sentinel.issue, worklog_id=None)
+    def test_runs_delete_worklog_if_worklog_id_provided_with_delete_flag(
+            self, mock_get_worklog, mock_update_worklog, mock_add_worklog, mock_delete_worklog
+    ):
+        self.payload.update(delete_worklog=True)
 
-        perform_log_action(sentinel.jira, payload)
+        perform_log_action(sentinel.jira, self.payload)
+
+        mock_get_worklog.assert_called_once_with(
+            sentinel.jira, issue=sentinel.issue, worklog_id=sentinel.worklog, delete_worklog=True
+        )
+        mock_delete_worklog.assert_called_once_with(
+            mock_get_worklog.return_value.result,
+            **self.payload
+        )
+        assert not mock_add_worklog.called
+        assert not mock_update_worklog.called
+
+    def test_runs_add_worklog_if_worklog_id_not_provided(
+            self, mock_get_worklog, mock_update_worklog, mock_add_worklog, mock_delete_worklog
+    ):
+        self.payload.update(worklog_id=None)
+
+        perform_log_action(sentinel.jira, self.payload)
 
         mock_get_worklog.assert_not_called()
-        mock_add_worklog.assert_called_once_with(sentinel.jira, **payload)
+        mock_add_worklog.assert_called_once_with(sentinel.jira, **self.payload)
+        assert not mock_delete_worklog.called
+        assert not mock_update_worklog.called
 
 
 class TestLog(CliTest):
