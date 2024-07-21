@@ -144,7 +144,7 @@ class TestGetJira:
     config = D({"JIRA_SERVER": "server", "JIRA_EMAIL": "email", "JIRA_TOKEN": "token"})
 
     def test_is_decorated_correctly(self):
-        assert get_jira.is_decorated_with_spin_it
+        assert get_jira.is_decorated_with_spinner
 
     def test_returns_result(self, mock_connect_to_jira):
         result = get_jira(self.config)
@@ -163,7 +163,7 @@ class TestGetJira:
 
 class TestGetBoard:
     def test_is_decorated_correctly(self):
-        assert get_board.is_decorated_with_spin_it
+        assert get_board.is_decorated_with_spinner
 
     def test_gets_board(self, mock_get_board_by_key):
         mock_jira = Mock()
@@ -178,7 +178,7 @@ class TestGetBoard:
 
 class TestGetSprint:
     def test_is_decorated_correctly(self):
-        assert get_sprint.is_decorated_with_spin_it
+        assert get_sprint.is_decorated_with_spinner
 
     def test_finds_sprint_from_id(self, mock_get_sprint_by_id, mock_process_sprint_out):
         mock_payload = D(sprint_id=sentinel.sprint_id)
@@ -240,7 +240,7 @@ class TestAddWorklog:
 
 class TestGetWorklog:
     def test_is_decorated_correctly(self):
-        assert get_worklog.is_decorated_with_spin_it
+        assert get_worklog.is_decorated_with_spinner
 
     @patch("dzira.cli.commands.datetime", Mock())
     def test_returns_worklog_if_matches_the_authenticated_user_by_email(self, mocker):
@@ -291,7 +291,7 @@ class TestUpdateWorklogPrivate:
 
 class TestUpdateWorklogPublic:
     def test_is_decorated_correctly(self):
-        assert update_worklog.is_decorated_with_spin_it
+        assert update_worklog.is_decorated_with_spinner
 
     def test_calls_private_function_and_wraps_the_result(self, mocker):
         mock_worklog = Mock(id="42")
@@ -384,7 +384,7 @@ class TestProcessSprintOut:
 
 class TestGetIssues:
     def test_is_decorated_correctly(self):
-        assert get_issues.is_decorated_with_spin_it
+        assert get_issues.is_decorated_with_spinner
 
     def test_gets_sprint_and_issues_using_api(self, mocker, mock_process_sprint_out):
         mock_api = mocker.patch("dzira.cli.commands.api.search_issues_with_sprint_info")
@@ -1038,7 +1038,7 @@ class TestLog(CliTest):
 
 class TestGetUser:
     def test_is_decorated_correctly(self):
-        assert get_user_id.is_decorated_with_spin_it
+        assert get_user_id.is_decorated_with_spinner
 
     def test_uses_api_and_returns_correct_data(self, mocker):
         mock_jira = Mock()
