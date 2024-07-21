@@ -349,10 +349,12 @@ class TestCalculateSeconds:
     def test_returns_seconds_delta_of_end_and_start(self, start, end, expected):
         assert calculate_seconds(D(start=start, end=end))["seconds"] == expected
 
+    @pytest.mark.skipif(sys.version_info < (3, 9), reason="requires python3.9 or higher")
     @time_machine.travel(datetime.datetime(2023, 11, 23, 8, 7, tzinfo=ZoneInfo("Europe/Warsaw")))
     def test_returns_seconds_delta_of_start_and_now_when_end_is_none(self):
         assert calculate_seconds(D(start="8:00", end=None))["seconds"] == 7 * 60
 
+    @pytest.mark.skipif(sys.version_info < (3, 9), reason="requires python3.9 or higher")
     @time_machine.travel(datetime.datetime(2023, 11, 23, 8, 7, tzinfo=ZoneInfo("Europe/Warsaw")))
     @pytest.mark.parametrize("start,end", [("2,10", "3.01"), ("2:10", "3h01")])
     def test_accepts_multiple_separators_in_input(self, start, end):
@@ -786,6 +788,7 @@ class TestValidateDate:
     def test_returns_early_when_date_is_none(self):
         assert validate_date(Mock(), Mock(), None) is None
 
+    @pytest.mark.skipif(sys.version_info < (3, 9), reason="requires python3.9 or higher")
     @time_machine.travel(datetime.datetime(2023, 11, 23, 14, 0, 0, tzinfo=ZoneInfo("Europe/Warsaw")))
     def test_uses_start_time_when_not_provided_in_date_option(self):
         mock_ctx = Mock(params={"start": "13:42"})
@@ -794,6 +797,7 @@ class TestValidateDate:
 
         assert result == datetime.datetime(2023, 11, 23, 12, 42)
 
+    @pytest.mark.skipif(sys.version_info < (3, 9), reason="requires python3.9 or higher")
     @time_machine.travel(datetime.datetime(2023, 11, 23, 14, 0, 0, tzinfo=ZoneInfo("Europe/Warsaw")))
     def test_adds_current_time_when_only_date_provided_in_the_option(self):
         result = validate_date(Mock(params={}), Mock(), "2023-11-23")
@@ -807,6 +811,7 @@ class TestValidateDate:
         assert "date has to match one of supported ISO formats" in str(exc_info)
         assert ", ".join(VALIDATE_DATE_FORMATS) in str(exc_info)
 
+    @pytest.mark.skipif(sys.version_info < (3, 9), reason="requires python3.9 or higher")
     @time_machine.travel(datetime.datetime(2023, 11, 23, 10, 0, 0, tzinfo=ZoneInfo("Europe/Warsaw")))
     def test_raises_when_date_in_future(self):
         with pytest.raises(click.BadParameter) as exc_info:
@@ -821,6 +826,7 @@ class TestValidateDate:
 
         assert "worklog date cannot be older than 2 weeks" in str(exc_info)
 
+    @pytest.mark.skipif(sys.version_info < (3, 9), reason="requires python3.9 or higher")
     @time_machine.travel(datetime.datetime(2023, 11, 23, 14, 0, 0, tzinfo=ZoneInfo("Europe/Warsaw")))
     def test_tries_to_convert_date_to_timezone_aware(self):
         result = validate_date(Mock(params={}), Mock(), "2023-11-23T13:42")
@@ -1053,7 +1059,7 @@ class TestGetUser:
 
 class TestGetIssuesWithWorkLoggedOnDate:
     def test_is_decorated_correctly(self):
-        assert get_issues_with_work_logged_on_date.is_decorated_with_spin_it
+        assert get_issues_with_work_logged_on_date.is_decorated_with_spinner
 
     def test_calls_api_to_get_issues(self, mocker):
         mock_api = mocker.patch("dzira.cli.commands.api.get_issues_by_work_logged_on_date")
@@ -1084,7 +1090,7 @@ class TestGetUserWorklogsFromDate:
         self.issues = [self.issue1, self.issue2]
 
     def test_is_decorated_correctly(self, _):
-        assert get_user_worklogs_from_date.is_decorated_with_spin_it
+        assert get_user_worklogs_from_date.is_decorated_with_spinner
 
     def test_uses_api_to_fetch_worklogs(self, mock_api):
         report_date = datetime.datetime(2023, 11, 26, 0, 0)
