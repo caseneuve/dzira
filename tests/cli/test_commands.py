@@ -4,7 +4,11 @@ import sys
 import time
 from collections import namedtuple
 from unittest.mock import Mock, PropertyMock, call, patch, sentinel
-from zoneinfo import ZoneInfo
+
+if sys.version_info > (3, 9):
+    from zoneinfo import ZoneInfo
+else:
+    def ZoneInfo(*args, **kwargs): ...
 
 import click
 import pytest
