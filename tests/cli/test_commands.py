@@ -4,18 +4,20 @@ import sys
 import time
 from collections import namedtuple
 from unittest.mock import Mock, PropertyMock, call, patch, sentinel
+from zoneinfo import ZoneInfo
 
 import click
 import pytest
 import tabulate
+import time_machine
 from click.testing import CliRunner
 
 from dzira.cli.commands import (
     D,
     DEFAULT_OUTPUT_FORMAT,
+    Result,
     VALIDATE_DATE_FORMATS,
     VALID_OUTPUT_FORMATS,
-    Result,
     _seconds_to_hour_minute_fmt,
     _update_worklog,
     add_worklog,
@@ -347,35 +349,18 @@ class TestCalculateSeconds:
     def test_returns_seconds_delta_of_end_and_start(self, start, end, expected):
         assert calculate_seconds(D(start=start, end=end))["seconds"] == expected
 
-    def test_returns_seconds_delta_of_start_and_now_when_end_is_none(self, mocker):
-        mock_datetime = mocker.patch("dzira.cli.commands.datetime")
-        start = "8:00"
-        fake_now = "8:07"
-        mock_datetime.strptime.side_effect = [
-            datetime.datetime.strptime(fake_now, "%H:%M"),
-            datetime.datetime.strptime(start, "%H:%M")
-        ]
-        assert calculate_seconds(D(start=start, end=None))["seconds"] == 7 * 60
+    @time_machine.travel(datetime.datetime(2023, 11, 23, 8, 7, tzinfo=ZoneInfo("Europe/Warsaw")))
+    def test_returns_seconds_delta_of_start_and_now_when_end_is_none(self):
+        assert calculate_seconds(D(start="8:00", end=None))["seconds"] == 7 * 60
 
-    def test_accepts_multiple_separators_in_input(self, mocker):
-        mock_sub = mocker.patch("dzira.cli.commands.re.sub")
-        mock_datetime = mocker.patch("dzira.cli.commands.datetime")
-        mock_datetime.strptime.return_value.__gt__ = Mock(return_value=False)
+    @time_machine.travel(datetime.datetime(2023, 11, 23, 8, 7, tzinfo=ZoneInfo("Europe/Warsaw")))
+    @pytest.mark.parametrize("start,end", [("2,10", "3.01"), ("2:10", "3h01")])
+    def test_accepts_multiple_separators_in_input(self, start, end):
+        result = calculate_seconds(D(start=start, end=end))
 
-        calculate_seconds(D(start="2,10", end="3.01"))
+        assert result["seconds"] == 3060
 
-        mock_sub.assert_has_calls(
-            [call("[,.h]", ":", "3.01"), call("[,.h]", ":", "2,10")]
-        )
-        assert mock_datetime.strptime.call_args_list == [
-            call(mock_sub.return_value, "%H:%M"),
-            call(mock_sub.return_value, "%H:%M"),
-        ]
-
-    def test_raises_when_end_time_prior_than_start_time(self, mocker):
-        mock_datetime = mocker.patch("dzira.cli.commands.datetime")
-        mock_datetime.strptime.return_value.__gt__ = Mock(return_value=True)
-
+    def test_raises_when_end_time_prior_than_start_time(self):
         with pytest.raises(click.BadParameter) as exc_info:
             calculate_seconds(D(start="18h00", end="8h00"))
 
@@ -801,89 +786,44 @@ class TestValidateDate:
     def test_returns_early_when_date_is_none(self):
         assert validate_date(Mock(), Mock(), None) is None
 
-    def test_uses_start_time_when_not_provided_in_date_option(self, mocker):
+    @time_machine.travel(datetime.datetime(2023, 11, 23, 14, 0, 0, tzinfo=ZoneInfo("Europe/Warsaw")))
+    def test_uses_start_time_when_not_provided_in_date_option(self):
         mock_ctx = Mock(params={"start": "13:42"})
-        mock_datetime = mocker.patch("dzira.cli.commands.datetime")
-        mock_isinstance = mocker.patch("dzira.cli.commands.isinstance")
-        mocker.patch("dzira.cli.commands.VALIDATE_DATE_FORMATS", ["%Y-%m-%d %H:%M"])
-        mock_isinstance.return_value = True
-        mock_datetime.strptime.return_value = datetime.datetime(2023, 11, 23, 13, 42)
-        mock_datetime.now.return_value = datetime.datetime(2023, 11, 24, 18, 0)
-        mock_datetime.utcnow.return_value\
-            .astimezone.return_value\
-            .utcoffset.return_value = None
 
         result = validate_date(mock_ctx, Mock(), "2023-11-23")
 
-        assert result == datetime.datetime(2023, 11, 23, 13, 42)
-        mock_datetime.strptime.assert_called_once_with("2023-11-23 13:42", "%Y-%m-%d %H:%M")
+        assert result == datetime.datetime(2023, 11, 23, 12, 42)
 
-    def test_adds_current_time_when_only_date_provided_in_the_option(self, mocker):
-        mocker.patch("dzira.cli.commands.isinstance", Mock(return_value=True))
-        mock_datetime = mocker.patch("dzira.cli.commands.datetime")
-        mock_given_date = datetime.datetime(2023, 11, 23, 0, 0)
-        mock_datetime.strptime.return_value = mock_given_date
-        mock_now = datetime.datetime(2023, 11, 24, 18, 5, 43)
-        mock_datetime.now.return_value = mock_now
-        mock_delta = datetime.timedelta(seconds=3600)
-        mock_datetime.utcnow.return_value\
-            .astimezone.return_value\
-            .utcoffset.return_value = mock_delta
-        mock_combine = datetime.datetime(2023, 11, 23, 18, 5, 43)
-        mock_datetime.combine.return_value = mock_combine
+    @time_machine.travel(datetime.datetime(2023, 11, 23, 14, 0, 0, tzinfo=ZoneInfo("Europe/Warsaw")))
+    def test_adds_current_time_when_only_date_provided_in_the_option(self):
+        result = validate_date(Mock(params={}), Mock(), "2023-11-23")
 
-        result = validate_date(Mock(), Mock(), "2023-11-23")
+        assert result == datetime.datetime(2023, 11, 23, 13, 0, 0)
 
-        assert result == mock_combine - mock_delta
-        mock_datetime.combine.assert_called_once_with(mock_datetime.date.return_value, mock_now.time())
-        mock_datetime.date.assert_called_once_with(mock_given_date)
-
-
-    def test_validates_against_multiple_formats_and_raises_when_none_matches(self, mocker):
-        mocker.patch("dzira.cli.commands.isinstance", Mock(return_value=False))
-        mock_datetime = mocker.patch("dzira.cli.commands.datetime")
-        mock_datetime.strptime.side_effect = 3 * [ValueError]
-
+    def test_validates_against_multiple_formats_and_raises_when_none_matches(self):
         with pytest.raises(click.BadParameter) as exc_info:
             validate_date(Mock(), Mock(), "foo")
 
         assert "date has to match one of supported ISO formats" in str(exc_info)
         assert ", ".join(VALIDATE_DATE_FORMATS) in str(exc_info)
-        for fmt in VALIDATE_DATE_FORMATS:
-            mock_datetime.strptime.assert_has_calls([call("foo", fmt)])
 
-    def test_raises_when_date_in_future(self, mocker):
-        mocker.patch("dzira.cli.commands.isinstance", Mock(return_value=True))
-        mock_datetime = mocker.patch("dzira.cli.commands.datetime")
-        mock_datetime.strptime.side_effect = [ValueError, datetime.datetime(2055, 11, 23, 13, 42)]
-        mock_datetime.now.return_value = datetime.datetime(2023, 11, 24, 18, 0)
-
+    @time_machine.travel(datetime.datetime(2023, 11, 23, 10, 0, 0, tzinfo=ZoneInfo("Europe/Warsaw")))
+    def test_raises_when_date_in_future(self):
         with pytest.raises(click.BadParameter) as exc_info:
             validate_date(Mock(), Mock(), "2055-11-23T13:42")
 
         assert "worklog date cannot be in future" in str(exc_info)
 
-    def test_raises_when_date_older_than_2_weeks(self, mocker):
-        mocker.patch("dzira.cli.commands.isinstance", Mock(return_value=True))
-        mock_datetime = mocker.patch("dzira.cli.commands.datetime")
-        mock_datetime.strptime.side_effect = [ValueError, datetime.datetime(1055, 11, 23, 13, 42)]
-        mock_datetime.now.return_value = datetime.datetime(2023, 11, 24, 18, 0)
-
+    @time_machine.travel(datetime.datetime(2023, 11, 23, 10, 0, 0, tzinfo=ZoneInfo("Europe/Warsaw")))
+    def test_raises_when_date_older_than_2_weeks(self):
         with pytest.raises(click.BadParameter) as exc_info:
             validate_date(Mock(), Mock(), "1055-11-23T13:42")
 
         assert "worklog date cannot be older than 2 weeks" in str(exc_info)
 
-    def test_tries_to_convert_date_to_timezone_aware(self, mocker):
-        mocker.patch("dzira.cli.commands.isinstance", Mock(return_value=True))
-        mock_datetime = mocker.patch("dzira.cli.commands.datetime")
-        mock_datetime.strptime.side_effect = [ValueError, datetime.datetime(2023, 11, 23, 13, 42)]
-        mock_datetime.now.return_value = datetime.datetime(2023, 11, 24, 18, 0)
-        mock_datetime.utcnow.return_value\
-            .astimezone.return_value\
-            .utcoffset.return_value = datetime.timedelta(seconds=3600)
-
-        result = validate_date(Mock(), Mock(), "2023-11-23T13:42")
+    @time_machine.travel(datetime.datetime(2023, 11, 23, 14, 0, 0, tzinfo=ZoneInfo("Europe/Warsaw")))
+    def test_tries_to_convert_date_to_timezone_aware(self):
+        result = validate_date(Mock(params={}), Mock(), "2023-11-23T13:42")
 
         assert result == datetime.datetime(2023, 11, 23, 12, 42)
 

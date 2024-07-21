@@ -427,33 +427,34 @@ def validate_date(ctx, _, value):
     if value is None:
         return
 
-    if re.match(r"^\d{4}-\d{2}-\d{2}$", value) and (start:=ctx.params.get("start")) is not None:
-        value = f"{value} {start}"
+    if re.match(r"^\d{4}-\d{2}-\d{2}$", value):
+        if (start:=ctx.params.get("start")) is not None:
+            value = f"{value} {start}"
 
-    given_date = None
+    given_datetime = None
+    now = datetime.now()
     for fmt in VALIDATE_DATE_FORMATS:
         try:
-            given_date = datetime.strptime(value, fmt)
+            given_datetime = datetime.strptime(value, fmt)
             if fmt == "%Y-%m-%d":
-                given_date = datetime.combine(datetime.date(given_date), datetime.now().time())
+                given_datetime = datetime.combine(datetime.date(given_datetime), now.time())
             break
         except ValueError:
             pass
 
-    if not isinstance(given_date, datetime):
+    if not isinstance(given_datetime, datetime):
         raise click.BadParameter(
             f"date has to match one of supported ISO formats: {', '.join(VALIDATE_DATE_FORMATS)}"
         )
-    now = datetime.now()
-    if given_date > now:
+    if given_datetime > now:
         raise click.BadParameter("worklog date cannot be in future!")
-    if (now - given_date).days > 14:
+    if (now - given_datetime).days > 14:
         raise click.BadParameter("worklog date cannot be older than 2 weeks!")
 
-    if (utc_offset:=datetime.now(UTC).astimezone().utcoffset()):
-        return given_date - utc_offset
+    if (utc_offset:=now.astimezone().utcoffset()):
+        return given_datetime - utc_offset
     else:
-        return given_date
+        return given_datetime
 
 
 def sanitize_params(args: D) -> D:
@@ -486,7 +487,6 @@ def calculate_seconds(payload: D) -> D:
 
     if start is None:
         time = payload.get("time")
-        assert isinstance(time, int), "Time spent has not been validated properly!"
         return payload.update("seconds", time)
 
     fmt = "%H:%M"
