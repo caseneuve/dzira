@@ -5,7 +5,7 @@ import json
 import re
 import subprocess
 import sys
-from datetime import UTC, date, datetime, timedelta
+from datetime import date, datetime, timedelta
 
 import click
 from jira import JIRA
