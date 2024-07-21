@@ -242,25 +242,27 @@ def show_issues(sprint_and_issues: D, format: str) -> None:
     if format in ("json", "csv"):
         colors.use = False
 
-    fmt = lambda t: str(timedelta(seconds=t)) if t else None
     state_clr = {"To Do": "^magenta", "In Progress": "^yellow", "Done": "^green"}
     clr = lambda s: c(state_clr.get(s, "^reset"), "^bold", s)
 
     def _estimate(i):
         try:
-            remining = i.fields.timetracking.remainingEstimate
+            remaining = i.fields.timetracking.remainingEstimate
             original = i.fields.timetracking.originalEstimate
-            return f"{remining} ({original})" if remining != original else original
+            return f"{remaining} ({original})" if remaining != original else original
         except Exception:
-            return fmt(i.fields.timeestimate)
+            _get_estimated_seconds_or_nothing = lambda t: str(timedelta(seconds=t)) if t else None
+            return _get_estimated_seconds_or_nothing(i.fields.timeestimate)
 
     headers = ["key", "summary", "state", "spent", "estimated"]
+
+    _get_time_spent_or_nothing = lambda t: t.raw.get('timeSpent') if t.raw else None
     processed_issues = [
         [
             c("^blue", i.key),
             i.fields.summary,
             clr(i.fields.status.name),
-            fmt(i.fields.timespent),
+            _get_time_spent_or_nothing(i.fields.timetracking),
             _estimate(i),
         ]
         for i in reversed(sorted(sprint_and_issues["issues"], key=lambda i: i.fields.status.name))

@@ -427,7 +427,8 @@ class TestShowIssues:
                 timespent=3600*4,
                 timetracking=Mock(
                     remainingEstimate="1d",
-                    originalEstimate="2d"
+                    originalEstimate="2d",
+                    raw={"timeSpent": "4h"}
                 )
             )
         )
@@ -439,7 +440,8 @@ class TestShowIssues:
                 timespent=3600*2,
                 timetracking=Mock(
                     remainingEstimate="3d",
-                    originalEstimate="3d"
+                    originalEstimate="3d",
+                    raw={"timeSpent": "2h"}
                 )
             )
         )
@@ -447,8 +449,8 @@ class TestShowIssues:
         self.sprint_and_issues = D(sprint=self.sprint, issues=self.issues)
         self.headers = ["key", "summary", "state", "spent", "estimated"]
         self.processed_issues = [
-            ["XYZ-2", "description 2", "To Do", str(datetime.timedelta(seconds=3600*2)), "3d"],
-            ["XYZ-1", "description 1", "In Progress", str(datetime.timedelta(seconds=3600*4)), "1d (2d)"]
+            ["XYZ-2", "description 2", "To Do", "2h", "3d"],
+            ["XYZ-1", "description 1", "In Progress", "4h", "1d (2d)"]
         ]
         colors.use = False
 

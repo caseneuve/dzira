@@ -6,7 +6,6 @@ from unittest.mock import Mock, sentinel
 import pytest
 
 from dzira.api import (
-    ISSUES_DEAFAULT_FIELDS,
     connect_to_jira,
     get_board_by_key,
     get_closed_sprints_issues,
@@ -25,6 +24,11 @@ from dzira.api import (
 
 
 # fixtures:
+
+@pytest.fixture()
+def issues_default_fields():
+    return ["Sprint,status,summary,timespent,timeestimate,timetracking"]
+
 
 @pytest.fixture()
 def mock_jira(mocker):
@@ -268,7 +272,7 @@ def test_get_issue_worklogs_by_user_and_date_exists_early_when_no_worklogs_found
     assert not mock_jira.worklogs.called
 
 
-def test_search_issues_with_sprint_info_uses_sprint_id(mock_jira):
+def test_search_issues_with_sprint_info_uses_sprint_id(mock_jira, issues_default_fields):
     sprint_id = "123"
 
     result = search_issues_with_sprint_info(
@@ -277,12 +281,12 @@ def test_search_issues_with_sprint_info_uses_sprint_id(mock_jira):
 
     mock_jira.search_issues.assert_called_once_with(
         jql_str=f"sprint = {sprint_id}",
-        fields=",".join(ISSUES_DEAFAULT_FIELDS)
+        fields=",".join(issues_default_fields)
     )
     assert result == list(mock_jira.search_issues_with_sprint_info.return_value)
 
 
-def test_search_issues_with_sprint_info_sprint_id_has_precedence(mock_jira):
+def test_search_issues_with_sprint_info_sprint_id_has_precedence(mock_jira, issues_default_fields):
     sprint_id = "123"
 
     search_issues_with_sprint_info(
@@ -291,18 +295,18 @@ def test_search_issues_with_sprint_info_sprint_id_has_precedence(mock_jira):
 
     mock_jira.search_issues.assert_called_once_with(
         jql_str=f"sprint = {sprint_id}",
-        fields=",".join(ISSUES_DEAFAULT_FIELDS)
+        fields=",".join(issues_default_fields)
     )
 
 
-def test_search_issues_with_sprint_info_uses_default_state(mock_jira):
+def test_search_issues_with_sprint_info_uses_default_state(mock_jira, issues_default_fields):
     project_key = "ABC-123"
 
     search_issues_with_sprint_info(mock_jira, project_key=project_key)
 
     mock_jira.search_issues.assert_called_once_with(
         jql_str=f"project = {project_key} AND sprint in openSprints()",
-        fields=",".join(ISSUES_DEAFAULT_FIELDS)
+        fields=",".join(issues_default_fields)
     )
 
 
@@ -314,23 +318,25 @@ def test_search_issues_with_sprint_info_uses_default_state(mock_jira):
         ("future", "futureSprints()"),
      ]
 )
-def test_search_issues_with_sprint_info_uses_provided_state(mock_jira, state, fn):
+def test_search_issues_with_sprint_info_uses_provided_state(
+        mock_jira, state, fn, issues_default_fields
+):
     project_key = "ABC-123"
 
     search_issues_with_sprint_info(mock_jira, project_key=project_key, state=state)
 
     mock_jira.search_issues.assert_called_once_with(
         jql_str=f"project = {project_key} AND sprint in {fn}",
-        fields=",".join(ISSUES_DEAFAULT_FIELDS)
+        fields=",".join(issues_default_fields)
     )
 
 
-def test_search_issues_with_sprint_info_fetches_extra_fields(mock_jira):
+def test_search_issues_with_sprint_info_fetches_extra_fields(mock_jira, issues_default_fields):
     project_key = "ABC-123"
 
     search_issues_with_sprint_info(mock_jira, project_key=project_key, extra_fields=["Foo", "Bar"])
 
     mock_jira.search_issues.assert_called_once_with(
         jql_str=f"project = {project_key} AND sprint in openSprints()",
-        fields=",".join(["Foo", "Bar"] + ISSUES_DEAFAULT_FIELDS)
+        fields=",".join(["Foo", "Bar"] + issues_default_fields)
     )

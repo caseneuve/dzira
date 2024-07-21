@@ -119,7 +119,7 @@ def get_issue_worklogs_by_user_and_date(
     return matching
 
 
-ISSUES_DEAFAULT_FIELDS = ["Sprint,status,summary,timespent,timeestimate"]
+ISSUES_DEFAULT_FIELDS = ["Sprint,status,summary,timespent,timeestimate,timetracking"]
 
 
 def search_issues_with_sprint_info(
@@ -136,9 +136,9 @@ def search_issues_with_sprint_info(
         query = f"project = {project_key} AND sprint in {fn}"
 
     if extra_fields:
-        extra_fields += ISSUES_DEAFAULT_FIELDS
+        extra_fields += ISSUES_DEFAULT_FIELDS
     else:
-        extra_fields = ISSUES_DEAFAULT_FIELDS
+        extra_fields = ISSUES_DEFAULT_FIELDS
     fields = ",".join(extra_fields)
 
     issues = jira.search_issues(jql_str=query, fields=fields)
