@@ -1,5 +1,23 @@
 # Changelog: `dzira`
 
+
+## [0.4.0](https://github.com/caseneuve/dzira/releases/tag/v0.4.0)
+
+### Fixed
+
+* Estimation showing in `ls` command ([#39](https://github.com/caseneuve/dzira/issues/39))
+* Some typos in the code
+* Removed deprecated `datetime.utcnow`
+
+### Added
+
+* `--delete` option to the `log` command for deleting worklogs ([#17](https://github.com/caseneuve/dzira/issues/17))
+
+### Changed
+
+* Renamed `spin_it` to `spinner`
+
+
 ## [0.3.1](https://github.com/caseneuve/dzira/releases/tag/v0.3.1)
 
 ### Fixed
