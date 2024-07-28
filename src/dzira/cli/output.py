@@ -83,9 +83,8 @@ class Spinner:
                             error_msg = " ".join(messages)
                         else:
                             error_msg = (
-                                "failed not perform the request while trying to "
-                                f"{func.__name__.replace('_', ' ')}"
-                                " (no error supplied by JIRA) :("
+                                f"{func.__name__.replace('_', ' ')} returned an error: "
+                                f"{exc.response.reason!r} :("
                             )
                     else:
                         error_msg = exc

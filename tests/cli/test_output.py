@@ -1,7 +1,9 @@
 import sys
-from unittest.mock import patch, sentinel
+import time
+from unittest.mock import Mock, call, patch, sentinel
 
 import pytest
+from jira.exceptions import JIRAError
 
 from src.dzira.betterdict import D
 from src.dzira.cli.output import (
@@ -88,6 +90,107 @@ class TestSpinner:
         assert spinner.colorizer == colors.c
         assert spinner.use == True
 
-    @pytest.mark.xfail
-    def test_todo_run(self):
-        assert False, "Need to write tests"
+    @patch("src.dzira.cli.output.print")
+    @patch("src.dzira.cli.output.concurrent.futures.ThreadPoolExecutor")
+    def test_uses_spinner(self, mock_thread_pool_executor, mock_print):
+        mock_submit = Mock(
+            return_value=Mock(
+                running=Mock(side_effect=[True, False]),
+                result=Mock(
+                    return_value=Mock(
+                        stdout=sentinel.stdout
+                    )
+                )
+            )
+        )
+        mock_thread_pool_executor.return_value.__enter__.return_value.submit = mock_submit
+
+        mock_colorizer = Mock(side_effect=[sentinel.for_running, sentinel.for_result])
+        spinner = Spinner(mock_colorizer)
+
+        @spinner.run(msg=sentinel.msg, done=sentinel.done)
+        def run_with_spinner(arg, kwarg=None):
+            time.sleep(0.11)
+            return [arg, kwarg]
+
+        run_with_spinner(sentinel.arg, kwarg=sentinel.kwarg)
+
+        assert run_with_spinner.is_decorated_with_spinner
+        assert mock_submit.call_args[0][0].__name__ == "run_with_spinner"
+        assert mock_submit.call_args[0][1] == sentinel.arg
+        assert mock_submit.call_args[1] == {"kwarg": sentinel.kwarg}
+        assert mock_print.call_args_list == [
+            call(sentinel.for_running, end="", flush=True, file=sys.stderr),
+            call(sentinel.for_result, flush=True, file=sys.stderr),
+        ]
+        assert mock_colorizer.call_args_list == [
+            call("\r", "^magenta", "⠋", "  ", sentinel.msg),
+            call("\r", "^green", sentinel.done, "  ", sentinel.msg, "^reset", ":\t", sentinel.stdout)
+        ]
+
+    @patch("src.dzira.cli.output.concurrent.futures.ThreadPoolExecutor")
+    def test_does_not_use_spinner(self, mock_thread_pool_executor):
+        spinner = Spinner(Mock())
+        spinner.use = False
+
+        @spinner.run("Testing")
+        def run_without_spinner():
+            return sentinel.result
+
+        result = run_without_spinner()
+
+        assert run_without_spinner.is_decorated_with_spinner
+        assert result == sentinel.result
+        assert not mock_thread_pool_executor.called
+
+    @patch("src.dzira.cli.output.print", Mock())
+    def test_gracefully_reports_errors(self):
+        colors = Colors()
+        spinner = Spinner(colors.c)
+
+        @spinner.run("Testing")
+        def jira_error_with_reason():
+            raise JIRAError(
+                "error",
+                status_code=500,
+                url="foo.bar.baz",
+                request=Mock(),
+                response=Mock(
+                    json=Mock(return_value={}),
+                    reason="blah!"
+                ),
+            )
+
+        with pytest.raises(Exception) as exc:
+            jira_error_with_reason()
+
+        assert jira_error_with_reason.is_decorated_with_spinner
+        assert "jira error with reason returned an error: 'blah!'" in str(exc)
+
+        @spinner.run("Testing")
+        def jira_error_with_json():
+            raise JIRAError(
+                "error",
+                status_code=404,
+                url="foo.bar.baz",
+                request=Mock(),
+                response=Mock(
+                    json=Mock(return_value={"errorMessages": ["page not found"]}),
+                ),
+            )
+
+        with pytest.raises(Exception) as exc:
+            jira_error_with_json()
+
+        assert jira_error_with_json.is_decorated_with_spinner
+        assert "page not found" in str(exc)
+
+        @spinner.run("Testing")
+        def non_jira_error():
+            raise Exception("non jira exception")
+
+        with pytest.raises(Exception) as exc:
+            non_jira_error()
+
+        assert non_jira_error.is_decorated_with_spinner
+        assert "non jira exception" in str(exc)
