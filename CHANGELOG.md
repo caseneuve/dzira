@@ -1,6 +1,13 @@
 # Changelog: `dzira`
 
 
+## [0.4.1](https://github.com/caseneuve/dzira/releases/tag/v0.4.1)
+
+### Fixed
+
+* Error reporting in `Spinner` ([#42](https://github.com/caseneuve/dzira/issues/42))
+
+
 ## [0.4.0](https://github.com/caseneuve/dzira/releases/tag/v0.4.0)
 
 ### Fixed
