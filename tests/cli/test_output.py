@@ -1,6 +1,7 @@
 import sys
-from unittest.mock import patch, sentinel
+from unittest.mock import Mock, patch, sentinel
 
+from jira.exceptions import JIRAError
 import pytest
 
 from src.dzira.betterdict import D
@@ -91,3 +92,52 @@ class TestSpinner:
     @pytest.mark.xfail
     def test_todo_run(self):
         assert False, "Need to write tests"
+
+    @patch("src.dzira.cli.output.print", Mock())
+    def test_gracefully_reports_errors(self):
+        colors = Colors()
+        spinner = Spinner(colors.c)
+
+        @spinner.run("Testing")
+        def jira_error_with_reason():
+            raise JIRAError(
+                "error",
+                status_code=500,
+                url="foo.bar.baz",
+                request=Mock(),
+                response=Mock(
+                    json=Mock(return_value={}),
+                    reason="blah!"
+                ),
+            )
+
+        with pytest.raises(Exception) as exc:
+            jira_error_with_reason()
+
+        assert "jira error with reason returned an error: 'blah!'" in str(exc)
+
+        @spinner.run("Testing")
+        def jira_error_with_json():
+            raise JIRAError(
+                "error",
+                status_code=404,
+                url="foo.bar.baz",
+                request=Mock(),
+                response=Mock(
+                    json=Mock(return_value={"errorMessages": ["page not found"]}),
+                ),
+            )
+
+        with pytest.raises(Exception) as exc:
+            jira_error_with_json()
+
+        assert "page not found" in str(exc)
+
+        @spinner.run("Testing")
+        def non_jira_error():
+            raise Exception("non jira exception")
+
+        with pytest.raises(Exception) as exc:
+            non_jira_error()
+
+        assert "non jira exception" in str(exc)
