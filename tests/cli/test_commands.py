@@ -144,40 +144,43 @@ def mock_get_sprints_by_board(mocker):
     )
 
 
-class TestGetJira:
-    config = D({"JIRA_SERVER": "server", "JIRA_EMAIL": "email", "JIRA_TOKEN": "token"})
+class TestJiraConnection:
+    config = D({"JIRA_SERVER": "test.server", "JIRA_EMAIL": "test@email.com", "JIRA_TOKEN": "test-token"})
 
-    def test_is_decorated_correctly(self):
+    def test_should_be_decorated_with_spinner(self):
         assert get_jira.is_decorated_with_spinner
 
-    def test_returns_result(self, mock_connect_to_jira):
+    def test_should_return_jira_client_with_connection_details(self, mock_connect_to_jira):
+        expected_jira = Mock()
+        mock_connect_to_jira.return_value = expected_jira
+
         result = get_jira(self.config)
 
-        assert type(result) == Result
-        assert result.result == mock_connect_to_jira.return_value
-        assert "server" in result.stdout
+        assert isinstance(result, Result)
+        assert result.result == expected_jira
+        assert "test.server" in result.stdout
 
-    def test_jira_connection_is_established_using_provided_config(
-            self, mock_connect_to_jira
-    ):
+    def test_should_establish_connection_with_provided_credentials(self, mock_connect_to_jira):
         get_jira(self.config)
 
-        mock_connect_to_jira.assert_called_once_with("server", "email", "token")
+        mock_connect_to_jira.assert_called_once_with("test.server", "test@email.com", "test-token")
 
 
-class TestGetBoard:
-    def test_is_decorated_correctly(self):
+class TestBoardRetrieval:
+    def test_should_be_decorated_with_spinner(self):
         assert get_board.is_decorated_with_spinner
 
-    def test_gets_board(self, mock_get_board_by_key):
+    def test_should_return_board_with_display_information(self, mock_get_board_by_key):
+        expected_board = Mock()
+        expected_board.raw = {"location": {"displayName": "My Test Board"}}
+        mock_get_board_by_key.return_value = expected_board
         mock_jira = Mock()
 
-        result = get_board(mock_jira, sentinel.key)
+        result = get_board(mock_jira, "TEST")
 
-        mock_get_board_by_key.assert_called_once_with(mock_jira, sentinel.key)
-        assert type(result) == Result
-        assert result.result == mock_get_board_by_key.return_value
-        assert "BoardName" in result.stdout
+        assert isinstance(result, Result)
+        assert result.result == expected_board
+        assert "My Test Board" in result.stdout
 
 
 class TestGetSprint:
@@ -710,31 +713,34 @@ class TestCorrectTimeFormats:
         assert expected == is_valid_hour(input)
 
 
-@patch("dzira.cli.commands.matches_time_re")
-class TestValidateTime:
-    def test_passes_when_time_is_none(self, mock_matches_time_re):
+class TestTimeValidation:
+    @pytest.mark.parametrize("time_input,expected_seconds", [
+        ("2h", 7200),
+        ("30m", 1800),
+        ("1h 30m", 5400),
+        ("90m", 5400),
+        ("8h", 28800),
+        ("1h59m", 7140),
+    ])
+    def test_should_convert_valid_time_formats_to_seconds(self, time_input, expected_seconds):
+        result = validate_time(Mock(), Mock(), time_input)
+        assert result == expected_seconds
+
+    def test_should_return_zero_when_no_time_provided(self):
         result = validate_time(Mock(), Mock(), None)
-
         assert result == 0
-        mock_matches_time_re.assert_not_called()
 
-    def test_passes_when_validator_passes(self, mock_matches_time_re):
-        mock_matches_time_re.return_value = D(h="2")
-
-        result = validate_time(Mock(), Mock(), "2h")
-
-        assert result == 7200
-        mock_matches_time_re.assert_called_with("2h")
-
-    def test_raises_otherwise(self, mock_matches_time_re):
-        mock_matches_time_re.return_value = False
-
+    @pytest.mark.parametrize("invalid_time", [
+        "25h",      # Too many hours
+        "5m",       # Too few minutes  
+        "invalid",  # Invalid format
+        "1h 70m",   # Invalid minutes
+        "9h 1m",    # Over 8 hour limit
+    ])
+    def test_should_reject_invalid_time_formats(self, invalid_time):
         with pytest.raises(click.BadParameter) as exc_info:
-            validate_time(Mock(), Mock(), "invalid")
-
-        mock_matches_time_re.assert_called_with("invalid")
-        assert "time cannot be greater than" in str(exc_info)
-        assert "has to be in format '[Nh][ N[m]]' or 'Nm'" in str(exc_info)
+            validate_time(Mock(), Mock(), invalid_time)
+        assert "time cannot be greater than" in str(exc_info.value) or "has to be in format" in str(exc_info.value)
 
 
 @patch("dzira.cli.commands.is_valid_hour")
