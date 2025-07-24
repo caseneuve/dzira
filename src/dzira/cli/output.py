@@ -10,7 +10,7 @@ from typing import Any
 
 from jira.exceptions import JIRAError
 
-from dzira.betterdict import D
+from ..betterdict import D
 
 
 class Colors:

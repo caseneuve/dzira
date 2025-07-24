@@ -6,7 +6,7 @@ from pathlib import Path
 from dotenv import dotenv_values
 from tabulate import tabulate_formats
 
-from dzira.betterdict import D
+from ..betterdict import D
 
 
 CONFIG_DIR_NAME = "dzira"
