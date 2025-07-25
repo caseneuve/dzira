@@ -29,6 +29,8 @@ class Sprint:
     id: int
     name: str
     state: str  # 'active', 'closed', 'future'
+    start_date: Optional[datetime] = None
+    end_date: Optional[datetime] = None
 
 
 @dataclass(frozen=True)
@@ -39,7 +41,10 @@ class Issue:
     status: str
     sprint_id: Optional[int] = None
     time_spent_seconds: Optional[int] = None
+    time_spent_display: Optional[str] = None  # Human-readable format like "2d 1h 50m"
     time_estimate_seconds: Optional[int] = None
+    time_remaining_estimate: Optional[str] = None  # Human-readable remaining like "0m"
+    time_original_estimate: Optional[str] = None   # Human-readable original like "3h"
 
 
 @dataclass(frozen=True)
