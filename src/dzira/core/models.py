@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Dict, Any
 
 
 @dataclass(frozen=True)
@@ -39,7 +39,7 @@ class Issue:
     key: str
     summary: str
     status: str
-    sprint_id: Optional[int] = None
+    sprint_info: Optional[Dict[str, Any]] = None
     time_spent_seconds: Optional[int] = None
     time_spent_display: Optional[str] = None  # Human-readable format like "2d 1h 50m"
     time_estimate_seconds: Optional[int] = None
