@@ -16,8 +16,6 @@ E = TypeVar("E", bound=Exception)
 
 
 class Colors:
-    """Color management for terminal output."""
-
     use = True
     C = {
         k: f"\033[{v}m"
@@ -34,15 +32,12 @@ class Colors:
     }
 
     def c(self, *args):
-        """Apply color codes to text."""
         if self.use:
             return "".join([self.C.get(a, a) for a in args]) + self.C["^reset"]
         return "".join([a for a in args if a not in self.C])
 
 
 class ROPSpinner:
-    """Async spinner that works with ROP Result types."""
-
     def __init__(self, colorizer: Colors):
         self.colorizer = colorizer
         self.use = True
@@ -120,7 +115,6 @@ class ROPSpinner:
                                 file=sys.stderr,
                             )
                         else:
-                            # Show error message
                             error_msg = self._format_error_message(
                                 result.error, func.__name__
                             )
@@ -142,7 +136,6 @@ class ROPSpinner:
                         return result
 
                 except Exception as exc:
-                    # Handle exceptions during execution
                     error_msg = self._format_error_message(exc, func.__name__)
                     print(
                         self.colorizer.c("\r", "^red", fail, separator, msg),
@@ -158,7 +151,6 @@ class ROPSpinner:
         return decorator
 
     def _format_error_message(self, exc: Exception, func_name: str) -> str:
-        """Format error message for display."""
         if isinstance(exc, JIRAError):
             messages = exc.response.json().get("errorMessages", [])
             if messages:
@@ -173,12 +165,10 @@ class ROPSpinner:
 
 
 def hide_cursor():
-    """Hide terminal cursor."""
     print("\033[?25l", end="", flush=True, file=sys.stderr)
 
 
 def show_cursor():
-    """Show terminal cursor."""
     print("\033[?25h", end="", flush=True, file=sys.stderr)
 
 
@@ -198,7 +188,6 @@ def with_spinner(
         done: Success indicator character
         fail: Failure indicator character
     """
-    # Create a default instance if none exists
     colors = Colors()
     spinner = ROPSpinner(colors)
     return spinner.with_spinner(msg, success_msg_fn, done, fail)

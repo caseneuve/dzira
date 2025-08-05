@@ -1,5 +1,3 @@
-"""Domain models independent of external API implementations."""
-
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -9,7 +7,6 @@ from typing import Optional, Dict, Any
 
 @dataclass(frozen=True)
 class User:
-    """Represents a user in the system."""
     id: str
     display_name: str
     email_address: Optional[str] = None
@@ -17,7 +14,6 @@ class User:
 
 @dataclass(frozen=True)
 class Board:
-    """Represents a project board."""
     id: int
     name: str
     project_key: str
@@ -25,7 +21,6 @@ class Board:
 
 @dataclass(frozen=True)
 class Sprint:
-    """Represents a sprint."""
     id: int
     name: str
     state: str  # 'active', 'closed', 'future'
@@ -35,7 +30,6 @@ class Sprint:
 
 @dataclass(frozen=True)
 class Issue:
-    """Represents an issue/ticket."""
     key: str
     summary: str
     status: str
@@ -49,7 +43,6 @@ class Issue:
 
 @dataclass(frozen=True)
 class Worklog:
-    """Represents a work log entry."""
     id: str
     issue_key: str
     time_spent_seconds: int
@@ -60,7 +53,6 @@ class Worklog:
 
 @dataclass(frozen=True)
 class WorklogEntry:
-    """Represents a worklog creation/update request."""
     issue_key: str
     time_spent_seconds: int
     comment: Optional[str] = None

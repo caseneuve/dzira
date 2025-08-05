@@ -14,8 +14,6 @@ from .result import Result, success, failure, safe
 
 
 # Connection
-
-
 def create_jira_connection(
     server: str, email: str, token: str
 ) -> Result[JIRA, Exception]:

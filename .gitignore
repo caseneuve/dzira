@@ -2,13 +2,14 @@
 *.json
 *.png
 .coverage
+.cursor
 .dir-locals.el
 .lsp.workspace
 .pypirc
 .pytest_cache
+CLAUDE.md
 __pycache__
 build/
 dist*/
 dist/
 pyrightconfig.json
-scratch/
