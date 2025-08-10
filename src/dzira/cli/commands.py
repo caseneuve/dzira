@@ -27,16 +27,6 @@ from .config import (
     get_config,
 )
 
-# new
-from dzira.cli.output_rop import ROPSpinner, with_spinner
-from dzira.core.operations import (
-    create_jira_connection,
-    get_issues_by_sprint_state,
-    search_issues_with_sprint_info,
-    get_sprint_by_id
-)
-from dzira.core.result import Result as RopResult, pipe, success
-
 
 colors = Colors()
 c = colors.c
@@ -54,18 +44,6 @@ def get_jira(config: D) -> Result:
     msg = f"connecting to {server}"
     jira: JIRA = api.connect_to_jira(server, email, token)
     return Result(stdout=msg, result=jira)
-
-
-# testme
-@with_spinner(
-    "Getting client",
-    lambda r: f"connecting to {r.data['server']}"
-)
-def get_jira_rop(config: D):
-    return create_jira_connection(
-        *config("JIRA_SERVER", "JIRA_EMAIL", "JIRA_TOKEN")
-    )
-
 
 
 @spinner.run("Getting board")
@@ -259,14 +237,6 @@ def get_issues(jira: JIRA, payload: D) -> Result:
     return Result(result=D(sprint=sprint_info, issues=issues), stdout=out)
 
 
-@with_spinner("Getting issues ROP", lambda r: process_sprint_out(D(r.value[0].sprint_info)))
-def get_issues_rop(jira: JIRA, payload: D) -> RopResult:
-    project_key, sprint_id, state = payload("JIRA_PROJECT_KEY", "sprint_id", ("state", "active"))
-    return search_issues_with_sprint_info(
-        jira, project_key=project_key, sprint_id=sprint_id, state=state
-    )
-
-
 # TODO: move data processing to data
 def show_issues(sprint_and_issues: D, format: str) -> None:
     if format in ("json", "csv"):
@@ -399,48 +369,6 @@ def ls(ctx, state, sprint_id, format):
     jira: JIRA = get_jira(config).result
     issues: D = get_issues(jira, D(state=state, sprint_id=sprint_id, **config)).result
     show_issues(issues, format=format)
-
-
-@cli.command()
-@click.pass_context
-@click.option(
-    "-s", "--state",
-    type=click.Choice(["active", "closed", "future"]), default="active", show_default=True,
-    help="Sprint state used for filtering",
-)
-@click.option(
-    "-i", "--sprint-id",
-    type=int,
-    help=(
-        "Sprint id to get unambiguous result, helpful when multiple active sprints; "
-        "has precedence over --state"
-    )
-)
-@click.option(
-    "-f", "--format",
-    default=DEFAULT_OUTPUT_FORMAT,
-    show_default=True,
-    help="Output format: supports TABULATE formats + CSV and JSON",
-    callback=validate_output_format,
-)
-@click.help_option("-h", "--help")
-def lsrop(ctx, state, sprint_id, format):
-    config: D = get_config(config=ctx.obj)
-    return (
-        get_jira_rop(config)
-        .bind(lambda j: get_issues_rop(j, D(state=state, sprint_id=sprint_id, **config)))
-        .tee(print)
-    )
-
-    # get_jira_rop(config)
-    # .bind(lambda j: get_issues_rop(j, D(state=state, sprint_id=sprint_id, **config)))
-    # issues: D = get_issues(jira, D(state=state, sprint_id=sprint_id, **config)).result
-
-    # issues = get_jira_rop(config).map()
-
-
-    # show_issues(issues, format=format)
-
 
 
 ##################################################

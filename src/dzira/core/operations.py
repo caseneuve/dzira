@@ -52,7 +52,6 @@ def fetch_worklogs(jira, issue_id):
 
 
 def search_issues(jira, jql, fields=None):
-    """Search issues - unified implementation."""
     return list(jira.search_issues(jql_str=jql, fields=fields))
 
 
@@ -256,21 +255,18 @@ def get_issues_by_sprint_state(
 def get_current_sprint_issues(
     jira: JIRA, project_key: str
 ) -> Result[List[Issue], Exception]:
-    """Get issues in active sprints."""
     return get_issues_by_sprint_state(jira, project_key, "active")
 
 
 def get_future_sprint_issues(
     jira: JIRA, project_key: str
 ) -> Result[List[Issue], Exception]:
-    """Get issues in future sprints."""
     return get_issues_by_sprint_state(jira, project_key, "future")
 
 
 def get_closed_sprint_issues(
     jira: JIRA, project_key: str
 ) -> Result[List[Issue], Exception]:
-    """Get issues in closed sprints."""
     return get_issues_by_sprint_state(jira, project_key, "closed")
 
 
@@ -281,7 +277,6 @@ def search_issues_with_sprint_info(
     sprint_id: Optional[str] = None,
     extra_fields: Optional[List[str]] = None,
 ) -> Result[List[Issue], Exception]:
-    # Build JQL query
     if sprint_id:
         jql = f"sprint = {sprint_id}"
     else:
@@ -292,13 +287,15 @@ def search_issues_with_sprint_info(
         }[state]
         jql = f"project = {project_key} AND sprint in {sprint_fn}"
 
-    # Build fields
+    # TODO: custom fields should go to user config
     default_fields = [
         "customfield_10121,Sprint,status,summary,timespent,timeestimate,timetracking"
     ]
     fields = ",".join((extra_fields or []) + default_fields)
 
-    return safe(search_issues)(jira, jql, fields).map(
+    return safe(search_issues)(
+        jira, jql, fields
+    ).map(
         lambda issues: [convert_issue(issue) for issue in issues]
     )
 
@@ -306,7 +303,6 @@ def search_issues_with_sprint_info(
 def get_issues_by_work_logged_on_date(
     jira: JIRA, project_key: str, report_date: Optional[datetime] = None
 ) -> Result[List[Issue], Exception]:
-    """Get issues with work logged on specific date."""
     if report_date is not None:
         date_query = f"worklogDate = {report_date:%Y-%m-%d}"
     else:
@@ -319,7 +315,6 @@ def get_issues_by_work_logged_on_date(
 
 
 def log_work(jira: JIRA, entry: WorklogEntry) -> Result[Worklog, Exception]:
-    """Create worklog entry."""
     if entry.time_spent_seconds < (5 * 60):
         return failure(
             ValueError(f"{entry.time_spent_seconds} seconds is too low to log")
@@ -333,7 +328,6 @@ def log_work(jira: JIRA, entry: WorklogEntry) -> Result[Worklog, Exception]:
 def get_worklog(
     jira: JIRA, issue_key: str, worklog_id: str
 ) -> Result[Worklog, Exception]:
-    """Get specific worklog."""
     return safe(fetch_worklog)(jira, issue_key, worklog_id).map(
         lambda worklog: convert_worklog(worklog, issue_key)
     )
@@ -342,7 +336,6 @@ def get_worklog(
 def get_issue_worklogs_by_user_and_date(
     jira: JIRA, issue: Issue, user_email: str, report_date: datetime
 ) -> Result[List[Worklog], Exception]:
-    """Get worklogs for issue by user and date."""
     return (
         safe(fetch_issue)(jira, issue.key, "worklog")
         .bind(lambda jira_issue: _get_worklogs_from_issue(jira, jira_issue))
