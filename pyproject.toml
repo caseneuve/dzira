@@ -32,8 +32,12 @@ classifiers = [
 
 [project.scripts]
 dzira = "dzira.cli.commands:main"
+dzi   = "dzira.cli.commands_rop:main"
 
 [project.urls]
 Homepage = "https://github.com/caseneuve/dzira"
 Issues = "https://github.com/caseneuve/dzira/issues"
 Changelog = "https://github.com/caseneuve/dzira/blob/master/CHANGELOG.md"
+
+[tool.black]
+line-length = 99

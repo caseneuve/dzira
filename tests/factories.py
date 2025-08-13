@@ -22,90 +22,6 @@ from dzira.core.models import User, Board, Sprint, Issue, Worklog, WorklogEntry
 
 
 # ====================================================================
-# DOMAIN MODEL FACTORIES
-# ====================================================================
-
-
-class UserFactory(Factory):
-    class Meta:
-        model = User
-
-    id = Sequence(lambda n: f"user{n}")
-    display_name = Faker("name")
-    email_address = LazyAttribute(
-        lambda obj: f"{obj.display_name.lower().replace(' ', '.')}@example.com"
-    )
-
-
-class BoardFactory(Factory):
-    class Meta:
-        model = Board
-
-    id = Sequence(lambda n: n + 1)
-    name = Sequence(lambda n: f"Test Board {n}")
-    project_key = Sequence(lambda n: f"PROJ{n}")
-
-
-class SprintFactory(Factory):
-    class Meta:
-        model = Sprint
-
-    id = Sequence(lambda n: n + 1)
-    name = Sequence(lambda n: f"Sprint {n}")
-    state = Iterator(["active", "closed", "future"])
-    start_date = LazyFunction(lambda: datetime.now() - timedelta(days=7))
-    end_date = LazyFunction(lambda: datetime.now() + timedelta(days=7))
-
-
-class IssueFactory(Factory):
-    class Meta:
-        model = Issue
-
-    key = Sequence(lambda n: f"TEST-{n}")
-    summary = Faker("sentence", nb_words=6)
-    status = Iterator(["To Do", "In Progress", "Done"])
-    time_spent_seconds = Faker("random_int", min=0, max=28800)
-    time_spent_display = LazyAttribute(
-        lambda obj: (
-            f"{obj.time_spent_seconds//3600}h {(obj.time_spent_seconds%3600)//60}m"
-            if obj.time_spent_seconds
-            else None
-        )
-    )
-    time_estimate_seconds = Faker("random_int", min=3600, max=86400)
-    time_remaining_estimate = LazyAttribute(
-        lambda obj: (
-            f"{obj.time_estimate_seconds//3600}h" if obj.time_estimate_seconds else None
-        )
-    )
-    time_original_estimate = LazyAttribute(
-        lambda obj: f"{(obj.time_estimate_seconds or 0)//3600 + 2}h"
-    )
-
-
-class WorklogFactory(Factory):
-    class Meta:
-        model = Worklog
-
-    id = Sequence(lambda n: str(n))
-    issue_key = Sequence(lambda n: f"TEST-{n}")
-    time_spent_seconds = Faker("random_int", min=300, max=28800)
-    comment = Faker("text", max_nb_chars=100)
-    started = LazyFunction(lambda: datetime.now() - timedelta(hours=8))
-    author_email = Faker("email")
-
-
-class WorklogEntryFactory(Factory):
-    class Meta:
-        model = WorklogEntry
-
-    issue_key = Sequence(lambda n: f"TEST-{n}")
-    time_spent_seconds = Faker("random_int", min=300, max=28800)
-    comment = Faker("text", max_nb_chars=100)
-    started = LazyFunction(lambda: datetime.now() - timedelta(hours=1))
-
-
-# ====================================================================
 # JIRA OBJECT FACTORIES
 # These create real jira.resources objects
 # ====================================================================
@@ -135,17 +51,11 @@ class JiraIssueFactory(JiraResourceFactory):
             "id": issue_id,
             "fields": {
                 "summary": fake.sentence(nb_words=6),
-                "status": {
-                    "name": fake.random_element(["To Do", "In Progress", "Done"])
-                },
+                "status": {"name": fake.random_element(["To Do", "In Progress", "Done"])},
                 "timespent": fake.random_int(min=0, max=28800),
                 "timetracking": {
-                    "remainingEstimate": fake.random_element(
-                        ["1d", "2d", "3d", "4h", "2h"]
-                    ),
-                    "originalEstimate": fake.random_element(
-                        ["2d", "3d", "4d", "8h", "6h"]
-                    ),
+                    "remainingEstimate": fake.random_element(["1d", "2d", "3d", "4h", "2h"]),
+                    "originalEstimate": fake.random_element(["2d", "3d", "4d", "8h", "6h"]),
                     "timeSpent": fake.random_element(["1h", "2h", "4h", "30m"]),
                 },
                 "Sprint": [
@@ -170,12 +80,8 @@ class JiraSprintFactory(JiraResourceFactory):
         sprint_id = fake.random_int(min=1, max=9999)
         sprint_name = f"Sprint {fake.random_int(min=1, max=50)}"
         state = fake.random_element(["active", "closed", "future"])
-        start_date = (datetime.now() - timedelta(days=7)).strftime(
-            "%Y-%m-%dT%H:%M:%S.%fZ"
-        )
-        end_date = (datetime.now() + timedelta(days=7)).strftime(
-            "%Y-%m-%dT%H:%M:%S.%fZ"
-        )
+        start_date = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+        end_date = (datetime.now() + timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
         return {
             "id": sprint_id,
@@ -214,9 +120,7 @@ class JiraWorklogFactory(JiraResourceFactory):
 
         time_spent_seconds = fake.random_int(min=300, max=28800)
         time_hours = time_spent_seconds // 3600
-        time_display = (
-            f"{time_hours}h" if time_hours > 0 else f"{time_spent_seconds//60}m"
-        )
+        time_display = f"{time_hours}h" if time_hours > 0 else f"{time_spent_seconds//60}m"
 
         worklog_id = fake.random_int(min=1, max=999999)
         issue_id = fake.random_int(min=1000, max=999999)
@@ -227,9 +131,7 @@ class JiraWorklogFactory(JiraResourceFactory):
             "timeSpent": time_display,
             "timeSpentSeconds": time_spent_seconds,
             "comment": fake.text(max_nb_chars=100),
-            "started": (datetime.now() - timedelta(hours=8)).strftime(
-                "%Y-%m-%dT%H:%M:%S.%f%z"
-            ),
+            "started": (datetime.now() - timedelta(hours=8)).strftime("%Y-%m-%dT%H:%M:%S.%f%z"),
             "author": {
                 "emailAddress": fake.email(),
                 "displayName": fake.name(),
@@ -258,9 +160,7 @@ class JiraIssueMinimalFieldsFactory(JiraResourceFactory):
             "id": issue_id,
             "fields": {
                 "summary": fake.sentence(nb_words=6),
-                "status": {
-                    "name": fake.random_element(["To Do", "In Progress", "Done"])
-                },
+                "status": {"name": fake.random_element(["To Do", "In Progress", "Done"])},
                 # Note: No timespent, timetracking, or Sprint fields
             },
         }
@@ -370,18 +270,14 @@ class JiraIssueParametricFactory(JiraResourceFactory):
             fields["summary"] = fake.sentence(nb_words=6)
 
         if "status" in self.requested_fields:
-            fields["status"] = {
-                "name": fake.random_element(["To Do", "In Progress", "Done"])
-            }
+            fields["status"] = {"name": fake.random_element(["To Do", "In Progress", "Done"])}
 
         if "timespent" in self.requested_fields:
             fields["timespent"] = fake.random_int(min=0, max=28800)
 
         if "timetracking" in self.requested_fields:
             fields["timetracking"] = {
-                "remainingEstimate": fake.random_element(
-                    ["1d", "2d", "3d", "4h", "2h"]
-                ),
+                "remainingEstimate": fake.random_element(["1d", "2d", "3d", "4h", "2h"]),
                 "originalEstimate": fake.random_element(["2d", "3d", "4d", "8h", "6h"]),
                 "timeSpent": fake.random_element(["1h", "2h", "4h", "30m"]),
             }
@@ -434,6 +330,88 @@ class JiraIssueParametricFactory(JiraResourceFactory):
 
 
 # ====================================================================
+# DOMAIN MODEL FACTORIES
+# ====================================================================
+
+
+class UserFactory(Factory):
+    class Meta:
+        model = User
+
+    id = Sequence(lambda n: f"user{n}")
+    display_name = Faker("name")
+    email_address = LazyAttribute(
+        lambda obj: f"{obj.display_name.lower().replace(' ', '.')}@example.com"
+    )
+
+
+class BoardFactory(Factory):
+    class Meta:
+        model = Board
+
+    id = Sequence(lambda n: n + 1)
+    name = Sequence(lambda n: f"Test Board {n}")
+    project_key = Sequence(lambda n: f"PROJ{n}")
+
+
+class SprintFactory(Factory):
+    class Meta:
+        model = Sprint
+
+    id = Sequence(lambda n: n + 1)
+    name = Sequence(lambda n: f"Sprint {n}")
+    state = Iterator(["active", "closed", "future"])
+    start_date = LazyFunction(lambda: datetime.now() - timedelta(days=7))
+    end_date = LazyFunction(lambda: datetime.now() + timedelta(days=7))
+
+
+class IssueFactory(Factory):
+    class Meta:
+        model = Issue
+
+    key = Sequence(lambda n: f"TEST-{n}")
+    summary = Faker("sentence", nb_words=6)
+    status = Iterator(["To Do", "In Progress", "Done"])
+    time_spent_seconds = Faker("random_int", min=0, max=28800)
+    time_spent_display = LazyAttribute(
+        lambda obj: (
+            f"{obj.time_spent_seconds//3600}h {(obj.time_spent_seconds%3600)//60}m"
+            if obj.time_spent_seconds
+            else None
+        )
+    )
+    time_estimate_seconds = Faker("random_int", min=3600, max=86400)
+    time_remaining_estimate = LazyAttribute(
+        lambda obj: (f"{obj.time_estimate_seconds//3600}h" if obj.time_estimate_seconds else None)
+    )
+    time_original_estimate = LazyAttribute(
+        lambda obj: f"{(obj.time_estimate_seconds or 0)//3600 + 2}h"
+    )
+
+
+class WorklogFactory(Factory):
+    class Meta:
+        model = Worklog
+
+    id = Sequence(lambda n: str(n))
+    issue_key = Sequence(lambda n: f"TEST-{n}")
+    time_spent_seconds = Faker("random_int", min=300, max=28800)
+    comment = Faker("text", max_nb_chars=100)
+    started = LazyFunction(lambda: datetime.now() - timedelta(hours=8))
+    author_email = Faker("email")
+
+
+class WorklogEntryFactory(Factory):
+    class Meta:
+        model = WorklogEntry
+
+    issue_key = Sequence(lambda n: f"TEST-{n}")
+    time_spent_seconds = Faker("random_int", min=300, max=28800)
+    comment = Faker("text", max_nb_chars=100)
+    started = LazyFunction(lambda: datetime.now() - timedelta(hours=1))
+
+
+# ====================================================================
 # SPECIALIZED FACTORIES
 # ====================================================================
 
@@ -462,12 +440,8 @@ class ActiveJiraSprintFactory(JiraSprintFactory):
 
         sprint_id = fake.random_int(min=1, max=9999)
         sprint_name = f"Sprint {fake.random_int(min=1, max=50)}"
-        start_date = (datetime.now() - timedelta(days=3)).strftime(
-            "%Y-%m-%dT%H:%M:%S.%fZ"
-        )
-        end_date = (datetime.now() + timedelta(days=11)).strftime(
-            "%Y-%m-%dT%H:%M:%S.%fZ"
-        )
+        start_date = (datetime.now() - timedelta(days=3)).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+        end_date = (datetime.now() + timedelta(days=11)).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
         return {
             "id": sprint_id,
@@ -495,12 +469,8 @@ class InProgressJiraIssueFactory(JiraIssueFactory):
                 "status": {"name": "In Progress"},
                 "timespent": fake.random_int(min=3600, max=14400),  # 1-4 hours
                 "timetracking": {
-                    "remainingEstimate": fake.random_element(
-                        ["1d", "2d", "3d", "4h", "2h"]
-                    ),
-                    "originalEstimate": fake.random_element(
-                        ["2d", "3d", "4d", "8h", "6h"]
-                    ),
+                    "remainingEstimate": fake.random_element(["1d", "2d", "3d", "4h", "2h"]),
+                    "originalEstimate": fake.random_element(["2d", "3d", "4d", "8h", "6h"]),
                     "timeSpent": fake.random_element(["1h", "2h", "4h", "30m"]),
                 },
                 "Sprint": [
@@ -526,9 +496,7 @@ class JiraWorklogWithTimeFactory(JiraWorklogFactory):
             "timeSpent": "2h",  # Fixed time
             "timeSpentSeconds": 7200,  # 2 hours
             "comment": fake.text(max_nb_chars=100),
-            "started": (datetime.now() - timedelta(hours=8)).strftime(
-                "%Y-%m-%dT%H:%M:%S.%f%z"
-            ),
+            "started": (datetime.now() - timedelta(hours=8)).strftime("%Y-%m-%dT%H:%M:%S.%f%z"),
             "author": {
                 "emailAddress": fake.email(),
                 "displayName": fake.name(),
@@ -618,3 +586,18 @@ SPRINT_QUERY_FIELDS = [
     "timeestimate",
     "timetracking",
 ]
+
+
+# ====================================================================
+# CONSTANTS / CONFIG FACTORIES
+# ====================================================================
+
+
+class JiraConfigFactory(Factory):
+    class Meta:
+        model = dict
+
+    JIRA_PROJECT_KEY = Sequence(lambda n: f"PROJ-{n}")
+    JIRA_EMAIL = Faker("email")
+    JIRA_TOKEN = Faker("uuid4")
+    JIRA_SERVER = Faker("url")

@@ -9,19 +9,16 @@ from tests.factories import (
     IssueFactory,
     WorklogFactory,
     WorklogEntryFactory,
-
     # JIRA object factories
     JiraIssueFactory,
     JiraSprintFactory,
     JiraBoardFactory,
     JiraWorklogFactory,
-
     # Field-specific JIRA factories
     JiraIssueMinimalFieldsFactory,
     JiraIssueWorklogFieldsFactory,
     JiraIssueSprintOnlyFactory,
     JiraIssueParametricFactory,
-
     # Specialized factories
     ActiveSprintFactory,
     InProgressIssueFactory,
@@ -29,17 +26,22 @@ from tests.factories import (
     ActiveJiraSprintFactory,
     InProgressJiraIssueFactory,
     JiraWorklogWithTimeFactory,
-
     # Helper functions
     create_jira_issue_with_fields,
     create_jira_issues_for_api_scenario,
     DEFAULT_ISSUE_FIELDS,
     WORKLOG_REPORT_FIELDS,
     SPRINT_QUERY_FIELDS,
+    JiraConfigFactory,
 )
 
 from dzira.core.models import User, Board, Sprint, Issue, Worklog, WorklogEntry
-from jira.resources import Issue as JiraIssue, Sprint as JiraSprint, Board as JiraBoard, Worklog as JiraWorklog
+from jira.resources import (
+    Issue as JiraIssue,
+    Sprint as JiraSprint,
+    Board as JiraBoard,
+    Worklog as JiraWorklog,
+)
 
 
 class TestDomainModelFactories:
@@ -48,8 +50,8 @@ class TestDomainModelFactories:
         user = UserFactory()
 
         assert isinstance(user, User)
-        assert user.id.startswith('user')
-        assert '@example.com' in user.email_address
+        assert user.id.startswith("user")
+        assert "@example.com" in user.email_address
         assert user.display_name
         assert user.email_address == f"{user.display_name.lower().replace(' ', '.')}@example.com"
 
@@ -64,8 +66,8 @@ class TestDomainModelFactories:
 
         assert isinstance(board, Board)
         assert board.id > 0
-        assert board.name.startswith('Test Board')
-        assert board.project_key.startswith('PROJ')
+        assert board.name.startswith("Test Board")
+        assert board.project_key.startswith("PROJ")
 
     def test_board_factory_with_custom_attributes(self):
         board = BoardFactory(name="Custom Board", project_key="CUST")
@@ -78,8 +80,8 @@ class TestDomainModelFactories:
 
         assert isinstance(sprint, Sprint)
         assert sprint.id > 0
-        assert sprint.name.startswith('Sprint')
-        assert sprint.state in ['active', 'closed', 'future']
+        assert sprint.name.startswith("Sprint")
+        assert sprint.state in ["active", "closed", "future"]
         assert isinstance(sprint.start_date, datetime)
         assert isinstance(sprint.end_date, datetime)
         assert sprint.end_date > sprint.start_date
@@ -88,9 +90,9 @@ class TestDomainModelFactories:
         issue = IssueFactory()
 
         assert isinstance(issue, Issue)
-        assert issue.key.startswith('TEST-')
+        assert issue.key.startswith("TEST-")
         assert issue.summary
-        assert issue.status in ['To Do', 'In Progress', 'Done']
+        assert issue.status in ["To Do", "In Progress", "Done"]
         assert isinstance(issue.time_spent_seconds, int)
         assert issue.time_spent_seconds >= 0
         assert isinstance(issue.time_estimate_seconds, int)
@@ -116,18 +118,18 @@ class TestDomainModelFactories:
 
         assert isinstance(worklog, Worklog)
         assert worklog.id
-        assert worklog.issue_key.startswith('TEST-')
+        assert worklog.issue_key.startswith("TEST-")
         assert isinstance(worklog.time_spent_seconds, int)
         assert worklog.time_spent_seconds >= 300  # At least 5 minutes
         assert worklog.comment
         assert isinstance(worklog.started, datetime)
-        assert '@' in worklog.author_email
+        assert "@" in worklog.author_email
 
     def test_worklog_entry_factory_creates_worklog_entry_instance(self):
         entry = WorklogEntryFactory()
 
         assert isinstance(entry, WorklogEntry)
-        assert entry.issue_key.startswith('TEST-')
+        assert entry.issue_key.startswith("TEST-")
         assert isinstance(entry.time_spent_seconds, int)
         assert entry.time_spent_seconds >= 300
         assert entry.comment
@@ -148,27 +150,27 @@ class TestJiraObjectFactories:
 
         assert isinstance(issue, JiraIssue)
         assert isinstance(issue.raw, dict)
-        assert 'key' in issue.raw
-        assert 'fields' in issue.raw
+        assert "key" in issue.raw
+        assert "fields" in issue.raw
         # Test that JIRA object has expected attributes from raw data
-        assert hasattr(issue, 'key')
-        assert hasattr(issue, 'id')
+        assert hasattr(issue, "key")
+        assert hasattr(issue, "id")
 
     def test_jira_issue_factory_fields_structure(self):
         issue = JiraIssueFactory()
 
-        fields = issue.raw['fields']
-        assert 'summary' in fields
-        assert 'status' in fields
-        assert 'timespent' in fields
-        assert 'timetracking' in fields
-        assert 'Sprint' in fields
+        fields = issue.raw["fields"]
+        assert "summary" in fields
+        assert "status" in fields
+        assert "timespent" in fields
+        assert "timetracking" in fields
+        assert "Sprint" in fields
 
     def test_jira_issue_factory_key_format(self):
         issue = JiraIssueFactory()
 
-        assert issue.raw['key'].startswith('TEST-')
-        assert isinstance(issue.raw['id'], str)
+        assert issue.raw["key"].startswith("TEST-")
+        assert isinstance(issue.raw["id"], str)
 
     def test_jira_sprint_factory_creates_jira_sprint_instance(self):
         sprint = JiraSprintFactory()
@@ -176,39 +178,39 @@ class TestJiraObjectFactories:
         assert isinstance(sprint, JiraSprint)
         assert isinstance(sprint.raw, dict)
         # Test that JIRA object has expected attributes from raw data
-        assert hasattr(sprint, 'id')
-        assert hasattr(sprint, 'name')
+        assert hasattr(sprint, "id")
+        assert hasattr(sprint, "name")
 
     def test_jira_sprint_factory_raw_structure(self):
         sprint = JiraSprintFactory()
 
         raw = sprint.raw
-        assert 'id' in raw
-        assert 'name' in raw
-        assert 'state' in raw
-        assert 'startDate' in raw
-        assert 'endDate' in raw
-        assert raw['state'] in ['active', 'closed', 'future']
+        assert "id" in raw
+        assert "name" in raw
+        assert "state" in raw
+        assert "startDate" in raw
+        assert "endDate" in raw
+        assert raw["state"] in ["active", "closed", "future"]
 
     def test_jira_sprint_factory_date_formatting(self):
         sprint = JiraSprintFactory()
 
         # Check ISO format with Z suffix
-        assert sprint.raw['startDate'].endswith('Z')
-        assert sprint.raw['endDate'].endswith('Z')
-        assert 'T' in sprint.raw['startDate']
-        assert 'T' in sprint.raw['endDate']
+        assert sprint.raw["startDate"].endswith("Z")
+        assert sprint.raw["endDate"].endswith("Z")
+        assert "T" in sprint.raw["startDate"]
+        assert "T" in sprint.raw["endDate"]
 
     def test_jira_board_factory_creates_jira_board_instance(self):
         board = JiraBoardFactory()
 
         assert isinstance(board, JiraBoard)
         assert isinstance(board.raw, dict)
-        assert 'location' in board.raw
-        assert 'displayName' in board.raw['location']
+        assert "location" in board.raw
+        assert "displayName" in board.raw["location"]
         # Test that JIRA object has expected attributes from raw data
-        assert hasattr(board, 'id')
-        assert hasattr(board, 'name')
+        assert hasattr(board, "id")
+        assert hasattr(board, "name")
 
     def test_jira_worklog_factory_creates_jira_worklog_instance(self):
         worklog = JiraWorklogFactory()
@@ -216,28 +218,28 @@ class TestJiraObjectFactories:
         assert isinstance(worklog, JiraWorklog)
         assert isinstance(worklog.raw, dict)
         # Test that JIRA object has expected attributes from raw data
-        assert hasattr(worklog, 'id')
+        assert hasattr(worklog, "id")
 
     def test_jira_worklog_factory_raw_structure(self):
         worklog = JiraWorklogFactory()
 
         raw = worklog.raw
-        assert 'id' in raw
-        assert 'issueId' in raw
-        assert 'timeSpent' in raw
-        assert 'timeSpentSeconds' in raw
-        assert 'comment' in raw
-        assert 'started' in raw
-        assert 'author' in raw
-        assert 'emailAddress' in raw['author']
-        assert 'displayName' in raw['author']
+        assert "id" in raw
+        assert "issueId" in raw
+        assert "timeSpent" in raw
+        assert "timeSpentSeconds" in raw
+        assert "comment" in raw
+        assert "started" in raw
+        assert "author" in raw
+        assert "emailAddress" in raw["author"]
+        assert "displayName" in raw["author"]
 
     def test_jira_worklog_factory_time_formatting(self):
         worklog = JiraWorklogFactory()
 
-        time_spent = worklog.raw['timeSpent']
+        time_spent = worklog.raw["timeSpent"]
         # Should be formatted as "Xh" or "Xm"
-        assert time_spent.endswith('h') or time_spent.endswith('m')
+        assert time_spent.endswith("h") or time_spent.endswith("m")
 
 
 class TestSpecializedFactories:
@@ -246,7 +248,7 @@ class TestSpecializedFactories:
         sprint = ActiveSprintFactory()
 
         assert isinstance(sprint, Sprint)
-        assert sprint.state == 'active'
+        assert sprint.state == "active"
         # Should be currently running (started in past, ends in future)
         now = datetime.now()
         assert sprint.start_date < now < sprint.end_date
@@ -255,7 +257,7 @@ class TestSpecializedFactories:
         issue = InProgressIssueFactory()
 
         assert isinstance(issue, Issue)
-        assert issue.status == 'In Progress'
+        assert issue.status == "In Progress"
         # Should have reasonable time logged (1-4 hours)
         assert 3600 <= issue.time_spent_seconds <= 14400
 
@@ -273,10 +275,10 @@ class TestSpecializedFactories:
         sprint = ActiveJiraSprintFactory()
 
         assert isinstance(sprint, JiraSprint)
-        assert sprint.raw['state'] == 'active'
+        assert sprint.raw["state"] == "active"
         # Should be currently running
-        start_date = datetime.strptime(sprint.raw['startDate'], "%Y-%m-%dT%H:%M:%S.%fZ")
-        end_date = datetime.strptime(sprint.raw['endDate'], "%Y-%m-%dT%H:%M:%S.%fZ")
+        start_date = datetime.strptime(sprint.raw["startDate"], "%Y-%m-%dT%H:%M:%S.%fZ")
+        end_date = datetime.strptime(sprint.raw["endDate"], "%Y-%m-%dT%H:%M:%S.%fZ")
         now = datetime.now()
         assert start_date < now < end_date
 
@@ -284,16 +286,16 @@ class TestSpecializedFactories:
         issue = InProgressJiraIssueFactory()
 
         assert isinstance(issue, JiraIssue)
-        assert issue.raw['fields']['status']['name'] == 'In Progress'
+        assert issue.raw["fields"]["status"]["name"] == "In Progress"
         # Should have reasonable time logged
-        assert 3600 <= issue.raw['fields']['timespent'] <= 14400
+        assert 3600 <= issue.raw["fields"]["timespent"] <= 14400
 
     def test_jira_worklog_with_time_factory(self):
         worklog = JiraWorklogWithTimeFactory()
 
         assert isinstance(worklog, JiraWorklog)
-        assert worklog.raw['timeSpent'] == '2h'
-        assert worklog.raw['timeSpentSeconds'] == 7200
+        assert worklog.raw["timeSpent"] == "2h"
+        assert worklog.raw["timeSpentSeconds"] == 7200
 
 
 class TestFactoryCustomization:
@@ -311,9 +313,9 @@ class TestFactoryCustomization:
         user_stub = UserFactory.stub()
 
         # Stub should have attributes but might not be full instance
-        assert hasattr(user_stub, 'id')
-        assert hasattr(user_stub, 'display_name')
-        assert hasattr(user_stub, 'email_address')
+        assert hasattr(user_stub, "id")
+        assert hasattr(user_stub, "display_name")
+        assert hasattr(user_stub, "email_address")
 
     def test_factory_sequence_uniqueness(self):
         users = [UserFactory() for _ in range(5)]
@@ -342,7 +344,7 @@ class TestFactoryCustomization:
         # Should have all three states represented (cycling)
         unique_states = set(states)
         assert len(unique_states) <= 3
-        assert unique_states.issubset({'active', 'closed', 'future'})
+        assert unique_states.issubset({"active", "closed", "future"})
 
 
 class TestFieldSpecificFactories:
@@ -351,108 +353,108 @@ class TestFieldSpecificFactories:
         issue = JiraIssueMinimalFieldsFactory()
 
         assert isinstance(issue, JiraIssue)
-        fields = issue.raw['fields']
+        fields = issue.raw["fields"]
 
         # Should have basic fields
-        assert 'summary' in fields
-        assert 'status' in fields
+        assert "summary" in fields
+        assert "status" in fields
 
         # Should NOT have time or sprint fields
-        assert 'timespent' not in fields
-        assert 'timetracking' not in fields
-        assert 'Sprint' not in fields
-        assert 'customfield_10121' not in fields
-        assert 'worklog' not in fields
+        assert "timespent" not in fields
+        assert "timetracking" not in fields
+        assert "Sprint" not in fields
+        assert "customfield_10121" not in fields
+        assert "worklog" not in fields
 
     def test_worklog_fields_factory_has_worklog_data(self):
         issue = JiraIssueWorklogFieldsFactory()
 
         assert isinstance(issue, JiraIssue)
-        fields = issue.raw['fields']
+        fields = issue.raw["fields"]
 
         # Should have basic fields
-        assert 'summary' in fields
-        assert 'worklog' in fields
+        assert "summary" in fields
+        assert "worklog" in fields
 
         # Worklog should have proper structure
-        worklog = fields['worklog']
-        assert 'total' in worklog
-        assert 'worklogs' in worklog
-        assert isinstance(worklog['worklogs'], list)
+        worklog = fields["worklog"]
+        assert "total" in worklog
+        assert "worklogs" in worklog
+        assert isinstance(worklog["worklogs"], list)
 
         # Should NOT have time tracking or sprint fields
-        assert 'timespent' not in fields
-        assert 'timetracking' not in fields
-        assert 'Sprint' not in fields
-        assert 'customfield_10121' not in fields
+        assert "timespent" not in fields
+        assert "timetracking" not in fields
+        assert "Sprint" not in fields
+        assert "customfield_10121" not in fields
 
     def test_sprint_only_factory_has_only_sprint_field(self):
         issue = JiraIssueSprintOnlyFactory()
 
         assert isinstance(issue, JiraIssue)
-        fields = issue.raw['fields']
+        fields = issue.raw["fields"]
 
         # Should have sprint field
-        assert 'customfield_10121' in fields
-        sprint_data = fields['customfield_10121'][0]
-        assert 'id' in sprint_data
-        assert 'name' in sprint_data
-        assert 'state' in sprint_data
-        assert 'startDate' in sprint_data
-        assert 'endDate' in sprint_data
+        assert "customfield_10121" in fields
+        sprint_data = fields["customfield_10121"][0]
+        assert "id" in sprint_data
+        assert "name" in sprint_data
+        assert "state" in sprint_data
+        assert "startDate" in sprint_data
+        assert "endDate" in sprint_data
 
         # Should NOT have other fields
-        assert 'summary' not in fields
-        assert 'status' not in fields
-        assert 'timespent' not in fields
-        assert 'timetracking' not in fields
-        assert 'worklog' not in fields
+        assert "summary" not in fields
+        assert "status" not in fields
+        assert "timespent" not in fields
+        assert "timetracking" not in fields
+        assert "worklog" not in fields
 
     def test_parametric_factory_with_custom_fields(self):
         # Test with only summary and status
-        issue = JiraIssueParametricFactory(requested_fields=['summary', 'status'])
+        issue = JiraIssueParametricFactory(requested_fields=["summary", "status"])
 
         assert isinstance(issue, JiraIssue)
-        fields = issue.raw['fields']
+        fields = issue.raw["fields"]
 
         # Should have requested fields
-        assert 'summary' in fields
-        assert 'status' in fields
+        assert "summary" in fields
+        assert "status" in fields
 
         # Should NOT have unrequested fields
-        assert 'timespent' not in fields
-        assert 'timetracking' not in fields
-        assert 'customfield_10121' not in fields
+        assert "timespent" not in fields
+        assert "timetracking" not in fields
+        assert "customfield_10121" not in fields
 
     def test_parametric_factory_with_sprint_fields(self):
         # Test with sprint and worklog fields
-        issue = JiraIssueParametricFactory(requested_fields=['customfield_10121', 'worklog'])
+        issue = JiraIssueParametricFactory(requested_fields=["customfield_10121", "worklog"])
 
         assert isinstance(issue, JiraIssue)
-        fields = issue.raw['fields']
+        fields = issue.raw["fields"]
 
         # Should have requested fields
-        assert 'customfield_10121' in fields
-        assert 'worklog' in fields
+        assert "customfield_10121" in fields
+        assert "worklog" in fields
 
         # Should NOT have unrequested fields
-        assert 'summary' not in fields
-        assert 'status' not in fields
-        assert 'timespent' not in fields
+        assert "summary" not in fields
+        assert "status" not in fields
+        assert "timespent" not in fields
 
     def test_parametric_factory_default_has_all_fields(self):
         # Test default behavior (all fields)
         issue = JiraIssueParametricFactory()
 
         assert isinstance(issue, JiraIssue)
-        fields = issue.raw['fields']
+        fields = issue.raw["fields"]
 
         # Should have all default fields
-        assert 'summary' in fields
-        assert 'status' in fields
-        assert 'timespent' in fields
-        assert 'timetracking' in fields
-        assert 'customfield_10121' in fields
+        assert "summary" in fields
+        assert "status" in fields
+        assert "timespent" in fields
+        assert "timetracking" in fields
+        assert "customfield_10121" in fields
 
 
 class TestFactoryIntegration:
@@ -466,10 +468,10 @@ class TestFactoryIntegration:
         worklog = CompletedWorklogFactory(issue_key=issue.key)
 
         # Verify they have compatible data
-        assert user.email_address.endswith('@example.com')
-        assert board.project_key.startswith('PROJ')
-        assert sprint.state == 'active'
-        assert issue.status == 'In Progress'
+        assert user.email_address.endswith("@example.com")
+        assert board.project_key.startswith("PROJ")
+        assert sprint.state == "active"
+        assert issue.status == "In Progress"
         assert worklog.issue_key == issue.key
 
     def test_jira_and_domain_factories_compatibility(self):
@@ -478,12 +480,12 @@ class TestFactoryIntegration:
         jira_issue = JiraIssueFactory()
 
         # Both should have compatible key formats
-        assert domain_issue.key.startswith('TEST-')
-        assert jira_issue.raw['key'].startswith('TEST-')
+        assert domain_issue.key.startswith("TEST-")
+        assert jira_issue.raw["key"].startswith("TEST-")
 
         # Both should have reasonable time values
         assert isinstance(domain_issue.time_spent_seconds, int)
-        assert isinstance(jira_issue.raw['fields']['timespent'], int)
+        assert isinstance(jira_issue.raw["fields"]["timespent"], int)
 
     def test_field_specific_factories_simulate_different_api_responses(self):
         # Simulate different API calls with different field requests
@@ -492,9 +494,9 @@ class TestFactoryIntegration:
         sprint_issue = JiraIssueSprintOnlyFactory()
 
         # Each should have different field structures
-        minimal_fields = set(minimal_issue.raw['fields'].keys())
-        worklog_fields = set(worklog_issue.raw['fields'].keys())
-        sprint_fields = set(sprint_issue.raw['fields'].keys())
+        minimal_fields = set(minimal_issue.raw["fields"].keys())
+        worklog_fields = set(worklog_issue.raw["fields"].keys())
+        sprint_fields = set(sprint_issue.raw["fields"].keys())
 
         # Should have minimal intersection (simulating different API responses)
         assert minimal_fields != worklog_fields
@@ -508,62 +510,69 @@ class TestHelperFunctions:
         issue = create_jira_issue_with_fields(["summary", "status"])
 
         assert isinstance(issue, JiraIssue)
-        fields = issue.raw['fields']
+        fields = issue.raw["fields"]
 
         # Should have requested fields
-        assert 'summary' in fields
-        assert 'status' in fields
+        assert "summary" in fields
+        assert "status" in fields
 
         # Should NOT have other fields
-        assert 'timespent' not in fields
-        assert 'timetracking' not in fields
-        assert 'customfield_10121' not in fields
+        assert "timespent" not in fields
+        assert "timetracking" not in fields
+        assert "customfield_10121" not in fields
 
     def test_create_jira_issue_with_fields_complex(self):
         issue = create_jira_issue_with_fields(["customfield_10121", "worklog", "timetracking"])
 
         assert isinstance(issue, JiraIssue)
-        fields = issue.raw['fields']
+        fields = issue.raw["fields"]
 
         # Should have requested fields
-        assert 'customfield_10121' in fields
-        assert 'worklog' in fields
-        assert 'timetracking' in fields
+        assert "customfield_10121" in fields
+        assert "worklog" in fields
+        assert "timetracking" in fields
 
         # Should NOT have unrequested fields
-        assert 'summary' not in fields
-        assert 'status' not in fields
+        assert "summary" not in fields
+        assert "status" not in fields
 
     def test_create_jira_issues_for_api_scenario_search_basic(self):
         issue = create_jira_issues_for_api_scenario("search_basic")
 
         assert isinstance(issue, JiraIssue)
-        fields = issue.raw['fields']
+        fields = issue.raw["fields"]
 
         # Should match search_basic scenario
-        assert 'summary' in fields
-        assert 'status' in fields
+        assert "summary" in fields
+        assert "status" in fields
         assert len(fields) == 2  # Only these two fields
 
     def test_create_jira_issues_for_api_scenario_search_with_worklog(self):
         issue = create_jira_issues_for_api_scenario("search_with_worklog")
 
         assert isinstance(issue, JiraIssue)
-        fields = issue.raw['fields']
+        fields = issue.raw["fields"]
 
         # Should match search_with_worklog scenario
-        assert 'summary' in fields
-        assert 'worklog' in fields
+        assert "summary" in fields
+        assert "worklog" in fields
         assert len(fields) == 2  # Only these two fields
 
     def test_create_jira_issues_for_api_scenario_search_full(self):
         issue = create_jira_issues_for_api_scenario("search_full")
 
         assert isinstance(issue, JiraIssue)
-        fields = issue.raw['fields']
+        fields = issue.raw["fields"]
 
         # Should have all fields
-        expected_fields = {"summary", "status", "timespent", "timetracking", "customfield_10121", "worklog"}
+        expected_fields = {
+            "summary",
+            "status",
+            "timespent",
+            "timetracking",
+            "customfield_10121",
+            "worklog",
+        }
         assert set(fields.keys()) == expected_fields
 
     def test_create_jira_issues_for_api_scenario_invalid_scenario(self):
@@ -596,9 +605,21 @@ class TestHelperFunctions:
         assert isinstance(issue3, JiraIssue)
 
         # Should have different field sets
-        fields1 = set(issue1.raw['fields'].keys())
-        fields2 = set(issue2.raw['fields'].keys())
-        fields3 = set(issue3.raw['fields'].keys())
+        fields1 = set(issue1.raw["fields"].keys())
+        fields2 = set(issue2.raw["fields"].keys())
+        fields3 = set(issue3.raw["fields"].keys())
 
         assert fields1 != fields2
         assert fields2 != fields3
+
+
+class TestJiraConfigFactory:
+
+    def test_field_constants(self):
+        config = JiraConfigFactory()
+
+        assert "JIRA_PROJECT_KEY" in config
+        assert "JIRA_EMAIL" in config
+        assert "@" in config["JIRA_EMAIL"]
+        assert "JIRA_TOKEN" in config
+        assert "JIRA_SERVER" in config
