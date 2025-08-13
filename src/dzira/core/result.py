@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from dataclasses import dataclass
 from functools import wraps, reduce
 from typing import Any, Callable, Generic, TypeVar, Union, cast
@@ -25,7 +27,7 @@ class Result(Generic[T, E]):
     def is_failure(self) -> bool:
         return self.error is not None
 
-    def map(self, fn: Callable[[T], U]) -> "Result[U, E]":
+    def map(self, fn: Callable[[T], U]) -> Result[U, E]:
         """Apply function to value if success, otherwise return failure."""
         if self.is_failure:
             return Result(error=self.error)
@@ -34,7 +36,7 @@ class Result(Generic[T, E]):
         except Exception as e:
             return Result(error=cast(E, e))
 
-    def bind(self, fn: Callable[[T], "Result[U, E]"]) -> "Result[U, E]":
+    def bind(self, fn: Callable[[T], Result[U, E]]) -> Result[U, E]:
         """Flat map - apply function that returns Result."""
         if self.is_failure:
             return Result(error=self.error)
@@ -54,7 +56,7 @@ class Result(Generic[T, E]):
         else:
             return on_failure(cast(E, self.error))
 
-    def tee(self, fn: Callable[[T], None]) -> "Result[T, E]":
+    def tee(self, fn: Callable[[T], None]) -> Result[T, E]:
         """Apply side effect function if success, return original result."""
         if self.is_success:
             try:
@@ -67,7 +69,7 @@ class Result(Generic[T, E]):
         """Return value if success, otherwise return default."""
         return cast(T, self.value) if self.is_success else default
 
-    def or_else_result(self, fn: Callable[[], "Result[T, E]"]) -> "Result[T, E]":
+    def or_else_result(self, fn: Callable[[], Result[T, E]]) -> Result[T, E]:
         return self if self.is_success else fn()
 
     def __bool__(self) -> bool:
