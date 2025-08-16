@@ -1,0 +1,9 @@
+click>=8.1
+factory-boy
+jira
+pytest
+pytest-cov
+pytest-mock
+python-dotenv
+rich
+setuptools
