@@ -3,6 +3,11 @@ import sys
 import click
 
 
+from ..core.operations_rop import create_jira_connection
+from ..core.result import pipe
+from .config_rop import get_config_rop
+
+
 @click.group()
 @click.option("-f", "--file", help=f"Config file path", type=click.Path())
 @click.option("-k", "--key", help="JIRA_PROJECT_KEY value", envvar="JIRA_PROJECT_KEY")
@@ -26,6 +31,34 @@ def cli(ctx, file, key, token, email, server):
         if v is not None
     }
     ctx.obj.update(cfg)
+
+
+@cli.command()
+@click.pass_context
+def ls(ctx):
+    """
+    TODO:
+    # config rop
+    - [X] get_config
+    # operations rop
+    - [X] get_jira
+    - [ ] get_sprints
+    # local:
+    - [ ] fork if ambiguous (more than one)
+    # operations:
+    - [ ] get sprint issues
+    # procesors
+    - [ ] process
+    - [ ] show
+    """
+    pipe(
+        ctx.obj,
+        get_config_rop,
+        create_jira_connection,
+    )
+    # .tee(
+    #     lambda x: print(vars(x))
+    # )
 
 
 def main():
