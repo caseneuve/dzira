@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import re
-
 from dataclasses import dataclass
 
 
@@ -16,6 +15,15 @@ class JiraConfig:
         self.JIRA_SERVER = self._sanitize_server(self.JIRA_SERVER)
         self.JIRA_EMAIL = self._validate_email(self.JIRA_EMAIL)
 
+    @classmethod
+    def from_dict(cls, config: dict) -> JiraConfig:
+        return cls(
+            JIRA_SERVER=config["JIRA_SERVER"],
+            JIRA_EMAIL=config["JIRA_EMAIL"],
+            JIRA_TOKEN=config["JIRA_TOKEN"],
+            JIRA_PROJECT_KEY=config["JIRA_PROJECT_KEY"],
+        )
+
     @staticmethod
     def _sanitize_server(server):
         server = re.sub(r"^https?://", "", server)
@@ -28,12 +36,3 @@ class JiraConfig:
         if not re.match(r"^[\w\.-]+@[\w\.-]+\.\w+$", email):
             raise ValueError(f"Invalid email: {email}")
         return email.lower()
-
-    @classmethod
-    def from_dict(cls, config: dict) -> JiraConfig:
-        return cls(
-            JIRA_SERVER=config["JIRA_SERVER"],
-            JIRA_EMAIL=config["JIRA_EMAIL"],
-            JIRA_TOKEN=config["JIRA_TOKEN"],
-            JIRA_PROJECT_KEY=config["JIRA_PROJECT_KEY"],
-        )

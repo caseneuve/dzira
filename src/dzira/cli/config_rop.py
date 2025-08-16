@@ -27,10 +27,7 @@ def get_environment_paths() -> List[str]:
 
 
 def discover_config_file() -> Optional[str]:
-    return next(
-        (path for path in get_environment_paths() if os.path.isfile(path)),
-        None
-    )
+    return next((path for path in get_environment_paths() if os.path.isfile(path)), None)
 
 
 @safe
@@ -39,10 +36,7 @@ def get_config_file_path(data: D) -> str:
 
 
 def load_config(data: D) -> Result[Dict[str, Any], Exception]:
-    return (
-        get_config_file_path(data)
-        .map(dotenv_values)
-    )
+    return get_config_file_path(data).map(dotenv_values)
 
 
 @safe

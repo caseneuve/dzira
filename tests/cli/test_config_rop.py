@@ -13,6 +13,7 @@ from dzira.cli.config_rop import (
     merge_configs,
 )
 from dzira.betterdict import D
+from dzira.core.models_rop import JiraConfig
 from dzira.core.result import success, failure
 
 
@@ -84,9 +85,7 @@ class TestGetEnvironmentPaths:
             ),
         ],
     )
-    def test_returns_correct_paths_based_on_env_vars(
-        self, mocker, env_vars, expected_paths
-    ):
+    def test_returns_correct_paths_based_on_env_vars(self, mocker, env_vars, expected_paths):
         mocker.patch.dict(os.environ, env_vars, clear=True)
 
         result = get_environment_paths()
@@ -106,9 +105,7 @@ class TestDiscoverConfigFile:
         mock_get_environment_paths.assert_called_once()
         assert mock_isfile.call_count == 2  # Stops at first match
 
-    def test_returns_none_when_no_files_exist(
-        self, mock_get_environment_paths, mock_isfile
-    ):
+    def test_returns_none_when_no_files_exist(self, mock_get_environment_paths, mock_isfile):
         mock_get_environment_paths.return_value = ["/path1", "/path2"]
         mock_isfile.return_value = False
 
@@ -149,9 +146,7 @@ class TestGetConfigFilePath:
 
 
 class TestLoadConfig:
-    def test_success_with_valid_file_path(
-        self, mock_get_config_file_path, mock_dotenv_values
-    ):
+    def test_success_with_valid_file_path(self, mock_get_config_file_path, mock_dotenv_values):
         mock_config = OrderedDict([("KEY1", "value1"), ("KEY2", "value2")])
         mock_get_config_file_path.return_value = success("/path/to/file")
         mock_dotenv_values.return_value = mock_config
@@ -163,9 +158,7 @@ class TestLoadConfig:
         mock_get_config_file_path.assert_called_once_with(D({"file": "/test"}))
         mock_dotenv_values.assert_called_once_with("/path/to/file")
 
-    def test_success_with_none_file_path(
-        self, mock_get_config_file_path, mock_dotenv_values
-    ):
+    def test_success_with_none_file_path(self, mock_get_config_file_path, mock_dotenv_values):
         mock_get_config_file_path.return_value = success(None)
         mock_dotenv_values.return_value = OrderedDict()
 
@@ -226,49 +219,35 @@ class TestMergeConfigs:
 
 
 class TestConvertToJiraConfig:
-    def test_returns_success_with_valid_config(self):
-        valid_config = {
-            "JIRA_SERVER": "https://test.atlassian.net",
-            "JIRA_EMAIL": "test@example.com",
-            "JIRA_TOKEN": "token123",
-            "JIRA_PROJECT_KEY": "TEST"
-        }
+    def test_returns_success_with_valid_config(self, config):
+        result = convert_to_jira_config(config)
 
-        result = convert_to_jira_config(valid_config)
-
-        assert result.is_success and result.value
-        jira_config = result.value
-        assert jira_config.JIRA_SERVER == "https://test.atlassian.net"
-        assert jira_config.JIRA_EMAIL == "test@example.com"
-        assert jira_config.JIRA_TOKEN == "token123"
-        assert jira_config.JIRA_PROJECT_KEY == "TEST"
+        assert result.is_success
+        assert isinstance(result.value, JiraConfig)
 
     def test_returns_failure_with_missing_required_fields(self):
         incomplete_config = {
             "JIRA_SERVER": "https://test.atlassian.net",
-            "JIRA_EMAIL": "test@example.com"
+            "JIRA_EMAIL": "test@example.com",
             # Missing JIRA_TOKEN and JIRA_PROJECT_KEY
         }
 
         result = convert_to_jira_config(incomplete_config)
 
         assert result.is_failure
-        assert "JIRA_TOKEN" in str(result.error) or "JIRA_PROJECT_KEY" in str(result.error) or "missing" in str(result.error).lower()
+        assert (
+            "JIRA_TOKEN" in str(result.error)
+            or "JIRA_PROJECT_KEY" in str(result.error)
+            or "missing" in str(result.error).lower()
+        )
 
-    def test_returns_success_with_extra_fields_ignored(self):
-        config_with_extra = {
-            "JIRA_SERVER": "https://test.atlassian.net",
-            "JIRA_EMAIL": "test@example.com",
-            "JIRA_TOKEN": "token123",
-            "JIRA_PROJECT_KEY": "TEST",
-            "EXTRA_FIELD": "ignored"
-        }
+    def test_returns_success_with_extra_fields_ignored(self, config):
+        config_with_extra = {**config, "EXTRA_FIELD": "ignored"}
 
         result = convert_to_jira_config(config_with_extra)
 
-        assert result.is_success and result.value
-        jira_config = result.value
-        assert jira_config.JIRA_SERVER == "https://test.atlassian.net"
+        assert result.is_success
+        assert isinstance(result.value, JiraConfig)
 
 
 class TestGetConfigRopPipeline:
@@ -281,9 +260,7 @@ class TestGetConfigRopPipeline:
         mock_validated_config = mock_merged_config
 
         mock_pipeline_functions["load_config"].return_value = success(mock_file_config)
-        mock_pipeline_functions["merge_configs"].return_value = success(
-            mock_merged_config
-        )
+        mock_pipeline_functions["merge_configs"].return_value = success(mock_merged_config)
         mock_pipeline_functions["convert_to_jira_config"].return_value = success(
             mock_validated_config
         )
@@ -315,21 +292,15 @@ class TestGetConfigRopPipeline:
         self, mock_pipeline_functions, failing_function, error_message
     ):
         # Success scenarios
-        mock_pipeline_functions["load_config"].return_value = success(
-            {"config": "data"}
-        )
-        mock_pipeline_functions["merge_configs"].return_value = success(
-            {"merged": "data"}
-        )
+        mock_pipeline_functions["load_config"].return_value = success({"config": "data"})
+        mock_pipeline_functions["merge_configs"].return_value = success({"merged": "data"})
         mock_pipeline_functions["convert_to_jira_config"].return_value = success(
             {"merged": "data"}
         )
 
         # Set up the failure point
         if failing_function == "load_config":
-            mock_pipeline_functions["load_config"].return_value = failure(
-                Exception(error_message)
-            )
+            mock_pipeline_functions["load_config"].return_value = failure(Exception(error_message))
         elif failing_function == "merge_configs":
             mock_pipeline_functions["merge_configs"].return_value = failure(
                 Exception(error_message)

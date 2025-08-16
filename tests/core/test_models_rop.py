@@ -6,47 +6,41 @@ import pytest
 from dzira.core.models_rop import JiraConfig
 
 
-EXAMPLE_DATA = dict(
-    JIRA_SERVER="company.atlassian.net",
-    JIRA_EMAIL="user@example.com",
-    JIRA_TOKEN="abc123",
-    JIRA_PROJECT_KEY="FOO"
-)
+@pytest.fixture
+def incomplete_configs(config):
+    return [
+        {k: config[k] for k in combo}
+        for r in range(0, len(config))
+        for combo in combinations(config.keys(), r)
+    ]
 
 
 class TestJiraConfig:
-    def test_creates_config_with_all_fields(self):
-        config = JiraConfig(**EXAMPLE_DATA)
+    def test_creates_config_with_all_fields(self, config):
+        jira_config = JiraConfig(**config)
 
-        assert config.JIRA_SERVER == EXAMPLE_DATA["JIRA_SERVER"]
-        assert config.JIRA_EMAIL == EXAMPLE_DATA["JIRA_EMAIL"]
-        assert config.JIRA_TOKEN == EXAMPLE_DATA["JIRA_TOKEN"]
-        assert config.JIRA_PROJECT_KEY == EXAMPLE_DATA["JIRA_PROJECT_KEY"]
+        assert jira_config.JIRA_SERVER in config["JIRA_SERVER"]
+        assert jira_config.JIRA_EMAIL == config["JIRA_EMAIL"].lower()
+        assert jira_config.JIRA_TOKEN == config["JIRA_TOKEN"]
+        assert jira_config.JIRA_PROJECT_KEY == config["JIRA_PROJECT_KEY"]
 
-    def test_equality(self):
-        config1 = JiraConfig(**EXAMPLE_DATA)
-        config2 = JiraConfig(**EXAMPLE_DATA)
-        config3 = JiraConfig(**{**EXAMPLE_DATA, "JIRA_EMAIL": "other@email.com"})
+    def test_equality(self, config):
+        config1 = JiraConfig(**config)
+        config2 = JiraConfig(**config)
+        config3 = JiraConfig(**{**config, "JIRA_EMAIL": "other@email.com"})
 
         assert config1 == config2
         assert config1 != config3
 
-    @pytest.mark.parametrize(
-        "args",
-        [
-            {k: EXAMPLE_DATA[k] for k in combo}
-            for r in range(0, len(EXAMPLE_DATA))
-            for combo in combinations(EXAMPLE_DATA.keys(), r)
-        ]
-    )
-    def test_requires_all_fields(self, args):
-        with pytest.raises(TypeError):
-            JiraConfig(*args)
+    def test_requires_all_fields(self, incomplete_configs):
+        for args in incomplete_configs:
+            with pytest.raises(TypeError):
+                JiraConfig(**args)
 
-    def test_from_dict_method_is_safe_for_data_with_other_keys(self):
-        extended_data = {**EXAMPLE_DATA, "extra": "key"}
+    def test_from_dict_method_is_safe_for_data_with_other_keys(self, config):
+        extended_data = {**config, "extra": "key"}
 
-        assert JiraConfig.from_dict(extended_data) == JiraConfig(**EXAMPLE_DATA)  # should not raise
+        assert JiraConfig.from_dict(extended_data) == JiraConfig(**config)  # should not raise
 
     @pytest.mark.parametrize("protocol", ("https", "http"))
     def test_removes_protocol_from_server(self, protocol):
@@ -70,10 +64,10 @@ class TestJiraConfig:
 
     @patch("dzira.core.models_rop.JiraConfig._validate_email")
     @patch("dzira.core.models_rop.JiraConfig._sanitize_server")
-    def test_validates_server_and_email(self, mock_sanitize_server, mock_validate_email):
-        config = JiraConfig(**EXAMPLE_DATA)
+    def test_validates_server_and_email(self, mock_sanitize_server, mock_validate_email, config):
+        jira_config = JiraConfig(**config)
 
         mock_sanitize_server.assert_called_once()
-        assert config.JIRA_SERVER == mock_sanitize_server.return_value
+        assert jira_config.JIRA_SERVER == mock_sanitize_server.return_value
         mock_validate_email.assert_called_once()
-        assert config.JIRA_EMAIL == mock_validate_email.return_value
+        assert jira_config.JIRA_EMAIL == mock_validate_email.return_value
