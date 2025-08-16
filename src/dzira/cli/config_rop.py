@@ -6,12 +6,12 @@ from typing import Any, Dict, List, Optional
 from dotenv import dotenv_values
 
 from ..betterdict import D
+from ..core.models_rop import JiraConfig
 from ..core.result import Result, pipe, partial, safe
 
 
 CONFIG_DIR_NAME = "dzira"
 DOTFILE = f".{CONFIG_DIR_NAME}"
-REQUIRED_KEYS = set(("JIRA_SERVER", "JIRA_EMAIL", "JIRA_TOKEN", "JIRA_PROJECT_KEY"))
 
 
 def get_environment_paths() -> List[str]:
@@ -38,16 +38,6 @@ def get_config_file_path(data: D) -> str:
     return data.get("file", discover_config_file())
 
 
-@safe
-def check_required_keys(config: D) -> Dict[str, Any]:
-    if missing_keys := REQUIRED_KEYS.difference(set(config.keys())):
-        raise Exception(
-            f"could not find required config values: "
-            f"{', '.join(sorted(missing_keys))}"
-        )
-    return config
-
-
 def load_config(data: D) -> Result[Dict[str, Any], Exception]:
     return (
         get_config_file_path(data)
@@ -56,8 +46,13 @@ def load_config(data: D) -> Result[Dict[str, Any], Exception]:
 
 
 @safe
-def merge_configs(data: D, config: D) -> Dict[str, Any]:
+def merge_configs(data: D, config: D) -> Dict[str, str]:
     return {**config, **data}
+
+
+@safe
+def convert_to_jira_config(config: Dict[str, str]) -> JiraConfig:
+    return JiraConfig.from_dict(config)
 
 
 def get_config_rop(data: D) -> Result[D, Exception]:
@@ -65,5 +60,5 @@ def get_config_rop(data: D) -> Result[D, Exception]:
         data,
         load_config,
         partial(merge_configs, data),
-        check_required_keys
+        convert_to_jira_config,
     )

@@ -4,8 +4,7 @@ from collections import OrderedDict
 import pytest
 
 from dzira.cli.config_rop import (
-    REQUIRED_KEYS,
-    check_required_keys,
+    convert_to_jira_config,
     discover_config_file,
     get_config_file_path,
     get_config_rop,
@@ -48,7 +47,7 @@ def mock_pipeline_functions(mocker):
     return {
         "load_config": mocker.patch("dzira.cli.config_rop.load_config"),
         "merge_configs": mocker.patch("dzira.cli.config_rop.merge_configs"),
-        "check_required_keys": mocker.patch("dzira.cli.config_rop.check_required_keys"),
+        "convert_to_jira_config": mocker.patch("dzira.cli.config_rop.convert_to_jira_config"),
     }
 
 
@@ -149,45 +148,6 @@ class TestGetConfigFilePath:
         mock_discover_config_file.assert_called_once()
 
 
-class TestCheckRequiredKeys:
-    def test_success_with_all_required_keys(self):
-        config = D({key: f"value_{key}" for key in REQUIRED_KEYS})
-
-        result = check_required_keys(config)
-
-        assert result.is_success
-        assert result.value == config
-
-    @pytest.mark.parametrize("missing_key", list(REQUIRED_KEYS))
-    def test_failure_with_missing_key(self, missing_key):
-        config = D({key: "value" for key in REQUIRED_KEYS if key != missing_key})
-
-        result = check_required_keys(config)
-
-        assert result.is_failure
-        assert missing_key in str(result.error)
-        assert "required config values" in str(result.error)
-
-    def test_failure_with_multiple_missing_keys(self):
-        config = D({"JIRA_SERVER": "value"})
-
-        result = check_required_keys(config)
-
-        assert result.is_failure
-        error_msg = str(result.error)
-        assert "JIRA_EMAIL" in error_msg
-        assert "JIRA_TOKEN" in error_msg
-        assert "JIRA_PROJECT_KEY" in error_msg
-
-    def test_preserves_extra_keys(self):
-        config = D({**{key: "value" for key in REQUIRED_KEYS}, "EXTRA": "extra_value"})
-
-        result = check_required_keys(config)
-
-        assert result.is_success
-        assert result.value["EXTRA"] == "extra_value"
-
-
 class TestLoadConfig:
     def test_success_with_valid_file_path(
         self, mock_get_config_file_path, mock_dotenv_values
@@ -265,12 +225,57 @@ class TestMergeConfigs:
         assert result.value["KEY1"] is None
 
 
+class TestConvertToJiraConfig:
+    def test_returns_success_with_valid_config(self):
+        valid_config = {
+            "JIRA_SERVER": "https://test.atlassian.net",
+            "JIRA_EMAIL": "test@example.com",
+            "JIRA_TOKEN": "token123",
+            "JIRA_PROJECT_KEY": "TEST"
+        }
+
+        result = convert_to_jira_config(valid_config)
+
+        assert result.is_success and result.value
+        jira_config = result.value
+        assert jira_config.JIRA_SERVER == "https://test.atlassian.net"
+        assert jira_config.JIRA_EMAIL == "test@example.com"
+        assert jira_config.JIRA_TOKEN == "token123"
+        assert jira_config.JIRA_PROJECT_KEY == "TEST"
+
+    def test_returns_failure_with_missing_required_fields(self):
+        incomplete_config = {
+            "JIRA_SERVER": "https://test.atlassian.net",
+            "JIRA_EMAIL": "test@example.com"
+            # Missing JIRA_TOKEN and JIRA_PROJECT_KEY
+        }
+
+        result = convert_to_jira_config(incomplete_config)
+
+        assert result.is_failure
+        assert "JIRA_TOKEN" in str(result.error) or "JIRA_PROJECT_KEY" in str(result.error) or "missing" in str(result.error).lower()
+
+    def test_returns_success_with_extra_fields_ignored(self):
+        config_with_extra = {
+            "JIRA_SERVER": "https://test.atlassian.net",
+            "JIRA_EMAIL": "test@example.com",
+            "JIRA_TOKEN": "token123",
+            "JIRA_PROJECT_KEY": "TEST",
+            "EXTRA_FIELD": "ignored"
+        }
+
+        result = convert_to_jira_config(config_with_extra)
+
+        assert result.is_success and result.value
+        jira_config = result.value
+        assert jira_config.JIRA_SERVER == "https://test.atlassian.net"
+
+
 class TestGetConfigRopPipeline:
     def test_successful_pipeline_execution_order(self, mock_pipeline_functions):
         mock_file_config = {"JIRA_SERVER": "server", "JIRA_EMAIL": "email"}
         mock_merged_config = {
-            "JIRA_SERVER": "server",
-            "JIRA_EMAIL": "email",
+            **mock_file_config,
             "input": "data",
         }
         mock_validated_config = mock_merged_config
@@ -279,7 +284,7 @@ class TestGetConfigRopPipeline:
         mock_pipeline_functions["merge_configs"].return_value = success(
             mock_merged_config
         )
-        mock_pipeline_functions["check_required_keys"].return_value = success(
+        mock_pipeline_functions["convert_to_jira_config"].return_value = success(
             mock_validated_config
         )
 
@@ -294,7 +299,7 @@ class TestGetConfigRopPipeline:
         mock_pipeline_functions["merge_configs"].assert_called_once_with(
             input_data, mock_file_config
         )
-        mock_pipeline_functions["check_required_keys"].assert_called_once_with(
+        mock_pipeline_functions["convert_to_jira_config"].assert_called_once_with(
             mock_merged_config
         )
 
@@ -303,32 +308,34 @@ class TestGetConfigRopPipeline:
         [
             ("load_config", "Load failed"),
             ("merge_configs", "Merge failed"),
-            ("check_required_keys", "Validation failed"),
+            ("convert_to_jira_config", "TypeError"),
         ],
     )
     def test_pipeline_short_circuits_on_failure(
         self, mock_pipeline_functions, failing_function, error_message
     ):
+        # Success scenarios
+        mock_pipeline_functions["load_config"].return_value = success(
+            {"config": "data"}
+        )
+        mock_pipeline_functions["merge_configs"].return_value = success(
+            {"merged": "data"}
+        )
+        mock_pipeline_functions["convert_to_jira_config"].return_value = success(
+            {"merged": "data"}
+        )
+
         # Set up the failure point
         if failing_function == "load_config":
             mock_pipeline_functions["load_config"].return_value = failure(
                 Exception(error_message)
             )
         elif failing_function == "merge_configs":
-            mock_pipeline_functions["load_config"].return_value = success(
-                {"config": "data"}
-            )
             mock_pipeline_functions["merge_configs"].return_value = failure(
                 Exception(error_message)
             )
-        else:  # check_required_keys
-            mock_pipeline_functions["load_config"].return_value = success(
-                {"config": "data"}
-            )
-            mock_pipeline_functions["merge_configs"].return_value = success(
-                {"merged": "data"}
-            )
-            mock_pipeline_functions["check_required_keys"].return_value = failure(
+        elif failing_function == "convert_to_jira_config":
+            mock_pipeline_functions["convert_to_jira_config"].return_value = failure(
                 Exception(error_message)
             )
 
@@ -340,10 +347,10 @@ class TestGetConfigRopPipeline:
         # Verify short-circuiting: functions after failure should not be called
         if failing_function == "load_config":
             mock_pipeline_functions["merge_configs"].assert_not_called()
-            mock_pipeline_functions["check_required_keys"].assert_not_called()
+            mock_pipeline_functions["convert_to_jira_config"].assert_not_called()
         elif failing_function == "merge_configs":
             mock_pipeline_functions["load_config"].assert_called_once()
-            mock_pipeline_functions["check_required_keys"].assert_not_called()
-        else:  # check_required_keys fails
+            mock_pipeline_functions["convert_to_jira_config"].assert_not_called()
+        elif failing_function == "convert_to_jira_config":
             mock_pipeline_functions["load_config"].assert_called_once()
             mock_pipeline_functions["merge_configs"].assert_called_once()
