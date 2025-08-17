@@ -5,8 +5,9 @@ from typing import Any
 
 from dotenv import dotenv_values
 
+from ..betterdict import D
 from ..core.models_rop import JiraConfig
-from ..core.result import Result, pipe, partial, safe
+from ..core.result import Result, pipe, safe
 
 
 CONFIG_DIR_NAME = "dzira"
@@ -30,28 +31,32 @@ def discover_config_file() -> str | None:
 
 
 @safe
-def get_config_file_path(data: dict[str, Any]) -> str:
+def get_config_file_path(data: D[str, str]) -> str | None:
     return data.get("file", discover_config_file())
 
 
-def load_config(data: dict[str, Any]) -> Result[dict[str, Any], Exception]:
-    return get_config_file_path(data).map(dotenv_values)
+def load_config(data: D[str, str | None]) -> Result[D[str, str | None], Exception]:
+    return (
+        get_config_file_path(data)
+        .map(dotenv_values)
+        .map(D)
+        .map(lambda config: config.merge(data))
+    )
 
 
 @safe
-def merge_configs(data: dict[str, Any], config: dict[str, Any]) -> dict[str, str]:
-    return {**config, **data}
+def convert_to_jira_config(config: D[str, Any]) -> D[str, str]:
+    jira_config = JiraConfig.from_dict(config)
+    return (
+        config
+        .assoc("jira_config", jira_config)
+        .dissoc(*jira_config.keys())
+    )
 
 
-@safe
-def convert_to_jira_config(config: dict[str, str]) -> JiraConfig:
-    return JiraConfig.from_dict(config)
-
-
-def get_config_rop(data: dict[str, Any]) -> Result[JiraConfig, Exception]:
+def get_config_rop(data: D[str, str]) -> Result[D[str, str], Exception]:
     return pipe(
         data,
         load_config,
-        partial(merge_configs, data),
         convert_to_jira_config,
     )
