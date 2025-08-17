@@ -71,3 +71,6 @@ class TestJiraConfig:
         assert jira_config.JIRA_SERVER == mock_sanitize_server.return_value
         mock_validate_email.assert_called_once()
         assert jira_config.JIRA_EMAIL == mock_validate_email.return_value
+
+    def test_returns_keys(self, config):
+        assert set(JiraConfig(**config).keys()) == set(config.keys())
