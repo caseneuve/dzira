@@ -1,4 +1,6 @@
-from dzira.core.result import Result, compose, failure, partial, pipe, safe, success
+import pytest
+
+from dzira.core.result import Result, compose, destruct, failure, partial, pipe, safe, success
 
 
 class TestResultCreation:
@@ -355,3 +357,19 @@ class TestHelperFunctions:
         result = partial_func(2, d=20)
 
         assert result == 33  # 1 + 2 + 10 + 20
+
+    def test_destruct_returns_keys_and_full_dict(self):
+        input = {"a": 1, "b": 2, "c": 3, "d": 4}
+
+        assert (1, 2, input) == destruct(input, "a", "b")
+        assert (1, 3, input) == destruct(input, "a", "c")
+        assert (2, 4, input) == destruct(input, "b", "d")
+
+    def test_destruct_raises_if_no_key_provided(self):
+        with pytest.raises(TypeError):
+            destruct({})    # type: ignore[call-arg]
+
+    def test_destruct_returns_none_for_missing_keys(self):
+        input = {"a": 1}
+
+        assert (None, input) == destruct(input, "b")

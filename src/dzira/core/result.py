@@ -121,3 +121,7 @@ def partial(
         return fn(*partial_args, *args, **partial_kwargs, **kwargs)
 
     return wrapper
+
+
+def destruct(config: dict[str, T], key, *keys: str) -> tuple[Any, ...]:
+    return (*[config.get(k) for k in [key, *keys]], config)
