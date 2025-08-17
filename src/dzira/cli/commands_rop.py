@@ -2,7 +2,7 @@ import sys
 
 import click
 
-
+from ..betterdict import D
 from ..core.operations_rop import create_jira_connection
 from ..core.result import pipe
 from .config_rop import get_config_rop
@@ -52,7 +52,7 @@ def ls(ctx):
     - [ ] show
     """
     pipe(
-        ctx.obj,
+        D(ctx.obj),
         get_config_rop,
         create_jira_connection,
     )
