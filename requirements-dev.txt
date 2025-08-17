@@ -1,6 +1,7 @@
 click>=8.1
 factory-boy
 jira
+keyring
 pytest
 pytest-cov
 pytest-mock

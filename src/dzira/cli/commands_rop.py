@@ -61,6 +61,22 @@ def ls(ctx):
     # )
 
 
+###################################################################################################
+# shell                                                                                           #
+###################################################################################################
+import subprocess
+
+@cli.command(hidden=True)
+@click.pass_context
+def shell(ctx):
+    config = get_config_rop(ctx.obj).value
+    assert config
+    print(f"Connecting to jira server using provided credentials (ignore the question below)")
+    subprocess.run(["jirashell", "-s", f"https://{config.JIRA_SERVER}", "-u", config.JIRA_EMAIL, "-p", config.JIRA_TOKEN])
+
+###################################################################################################
+
+
 def main():
     try:
         cli()
