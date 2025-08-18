@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
+
+from ..betterdict import D
 
 
 @dataclass
@@ -16,7 +18,7 @@ class JiraConfig:
         self.JIRA_EMAIL = self._validate_email(self.JIRA_EMAIL)
 
     @classmethod
-    def from_dict(cls, config: dict) -> JiraConfig:
+    def from_dict(cls, config: dict | D) -> JiraConfig:
         return cls(
             JIRA_SERVER=config["JIRA_SERVER"],
             JIRA_EMAIL=config["JIRA_EMAIL"],
@@ -36,3 +38,6 @@ class JiraConfig:
         if not re.match(r"^[\w\.-]+@[\w\.-]+\.\w+$", email):
             raise ValueError(f"Invalid email: {email}")
         return email.lower()
+
+    def keys(self):
+        return [f.name for f in fields(self)]

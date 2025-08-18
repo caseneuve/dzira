@@ -1,5 +1,4 @@
 import os
-from collections import OrderedDict
 
 import pytest
 
@@ -10,7 +9,6 @@ from dzira.cli.config_rop import (
     get_config_rop,
     get_environment_paths,
     load_config,
-    merge_configs,
 )
 from dzira.betterdict import D
 from dzira.core.models_rop import JiraConfig
@@ -47,7 +45,6 @@ def mock_dotenv_values(mocker):
 def mock_pipeline_functions(mocker):
     return {
         "load_config": mocker.patch("dzira.cli.config_rop.load_config"),
-        "merge_configs": mocker.patch("dzira.cli.config_rop.merge_configs"),
         "convert_to_jira_config": mocker.patch("dzira.cli.config_rop.convert_to_jira_config"),
     }
 
@@ -147,25 +144,48 @@ class TestGetConfigFilePath:
 
 class TestLoadConfig:
     def test_success_with_valid_file_path(self, mock_get_config_file_path, mock_dotenv_values):
-        mock_config = OrderedDict([("KEY1", "value1"), ("KEY2", "value2")])
+        file_config = {"KEY1": "value1", "KEY2": "value2"}
         mock_get_config_file_path.return_value = success("/path/to/file")
-        mock_dotenv_values.return_value = mock_config
+        mock_dotenv_values.return_value = file_config
 
-        result = load_config(D({"file": "/test"}))
+        input_data = D({"file": "/test", "KEY1": "input_value"})
+        result = load_config(input_data)
 
         assert result.is_success
-        assert result.value == mock_config
-        mock_get_config_file_path.assert_called_once_with(D({"file": "/test"}))
+        # File config should override input data (c.merge(data) means data wins)
+        expected = D({"file": "/test", "KEY1": "input_value", "KEY2": "value2"})
+        assert result.value == expected
+        mock_get_config_file_path.assert_called_once_with(input_data)
         mock_dotenv_values.assert_called_once_with("/path/to/file")
+
+    def test_merge_precedence_file_vs_input(self, mock_get_config_file_path, mock_dotenv_values):
+        # Test that input data takes precedence over file config
+        file_config = {"COMMON_KEY": "from_file", "FILE_ONLY": "file_value"}
+        mock_get_config_file_path.return_value = success("/path/to/file")
+        mock_dotenv_values.return_value = file_config
+
+        input_data = D({"COMMON_KEY": "from_input", "INPUT_ONLY": "input_value"})
+        result = load_config(input_data)
+
+        assert result.is_success
+        # Input should win for COMMON_KEY, both unique keys should be present
+        expected = D(
+            {
+                "COMMON_KEY": "from_input",  # Input wins
+                "FILE_ONLY": "file_value",  # From file
+                "INPUT_ONLY": "input_value",  # From input
+            }
+        )
+        assert result.value == expected
 
     def test_success_with_none_file_path(self, mock_get_config_file_path, mock_dotenv_values):
         mock_get_config_file_path.return_value = success(None)
-        mock_dotenv_values.return_value = OrderedDict()
+        mock_dotenv_values.return_value = {}
 
         result = load_config(D({}))
 
         assert result.is_success
-        assert isinstance(result.value, OrderedDict)
+        assert isinstance(result.value, D)
         assert len(result.value) == 0
         mock_dotenv_values.assert_called_once_with(None)
 
@@ -189,48 +209,37 @@ class TestLoadConfig:
         assert "File not found" in str(result.error)
 
 
-class TestMergeConfigs:
-    def test_input_data_overrides_file_config(self):
-        input_data = D({"KEY1": "input_value", "KEY2": "input_only"})
-        file_config = D({"KEY1": "file_value", "KEY3": "file_only"})
-
-        result = merge_configs(input_data, file_config)
-
-        assert result.is_success and result.value
-        merged = result.value
-        assert merged["KEY1"] == "input_value"  # Input wins
-        assert merged["KEY2"] == "input_only"  # From input
-        assert merged["KEY3"] == "file_only"  # From file
-
-    def test_handles_empty_configs(self):
-        result = merge_configs(D({}), D({}))
-
-        assert result.is_success and result.value is not None
-        assert len(result.value) == 0
-
-    def test_none_values_override(self):
-        input_data = D({"KEY1": None})
-        file_config = D({"KEY1": "file_value"})
-
-        result = merge_configs(input_data, file_config)
-
-        assert result.is_success and result.value
-        assert result.value["KEY1"] is None
-
-
 class TestConvertToJiraConfig:
     def test_returns_success_with_valid_config(self, config):
-        result = convert_to_jira_config(config)
+        # Add some extra data to verify it's preserved
+        extended_config = {**config, "EXTRA_KEY": "extra_value"}
+        d_config = D(extended_config)
+        result = convert_to_jira_config(d_config)
 
         assert result.is_success
-        assert isinstance(result.value, JiraConfig)
+        assert isinstance(result.value, D)
+
+        # Should have jira_config added
+        assert "jira_config" in result.value
+        assert isinstance(result.value.get("jira_config"), JiraConfig)
+
+        # Should have removed the original JIRA_* keys
+        assert "JIRA_SERVER" not in result.value
+        assert "JIRA_EMAIL" not in result.value
+        assert "JIRA_TOKEN" not in result.value
+        assert "JIRA_PROJECT_KEY" not in result.value
+
+        # Should preserve non-JIRA keys
+        assert result.value.get("EXTRA_KEY") == "extra_value"
 
     def test_returns_failure_with_missing_required_fields(self):
-        incomplete_config = {
-            "JIRA_SERVER": "https://test.atlassian.net",
-            "JIRA_EMAIL": "test@example.com",
-            # Missing JIRA_TOKEN and JIRA_PROJECT_KEY
-        }
+        incomplete_config = D(
+            {
+                "JIRA_SERVER": "https://test.atlassian.net",
+                "JIRA_EMAIL": "test@example.com",
+                # Missing JIRA_TOKEN and JIRA_PROJECT_KEY
+            }
+        )
 
         result = convert_to_jira_config(incomplete_config)
 
@@ -241,26 +250,26 @@ class TestConvertToJiraConfig:
             or "missing" in str(result.error).lower()
         )
 
-    def test_returns_success_with_extra_fields_ignored(self, config):
-        config_with_extra = {**config, "EXTRA_FIELD": "ignored"}
+    def test_returns_success_with_extra_fields_preserved(self, config):
+        config_with_extra = D({**config, "EXTRA_FIELD": "preserved"})
 
         result = convert_to_jira_config(config_with_extra)
 
         assert result.is_success
-        assert isinstance(result.value, JiraConfig)
+        assert isinstance(result.value, D)
+
+        # Extra field should be preserved (not ignored)
+        assert result.value.get("EXTRA_FIELD") == "preserved"
+        assert "jira_config" in result.value
 
 
 class TestGetConfigRopPipeline:
     def test_successful_pipeline_execution_order(self, mock_pipeline_functions):
-        mock_file_config = {"JIRA_SERVER": "server", "JIRA_EMAIL": "email"}
-        mock_merged_config = {
-            **mock_file_config,
-            "input": "data",
-        }
-        mock_validated_config = mock_merged_config
+        # load_config merges input with file config
+        mock_merged_config = D({"JIRA_SERVER": "server", "JIRA_EMAIL": "email", "input": "data"})
+        mock_validated_config = D({"jira_config": "validated", "input": "data"})
 
-        mock_pipeline_functions["load_config"].return_value = success(mock_file_config)
-        mock_pipeline_functions["merge_configs"].return_value = success(mock_merged_config)
+        mock_pipeline_functions["load_config"].return_value = success(mock_merged_config)
         mock_pipeline_functions["convert_to_jira_config"].return_value = success(
             mock_validated_config
         )
@@ -273,9 +282,6 @@ class TestGetConfigRopPipeline:
 
         # Verify call order and arguments
         mock_pipeline_functions["load_config"].assert_called_once_with(input_data)
-        mock_pipeline_functions["merge_configs"].assert_called_once_with(
-            input_data, mock_file_config
-        )
         mock_pipeline_functions["convert_to_jira_config"].assert_called_once_with(
             mock_merged_config
         )
@@ -284,7 +290,6 @@ class TestGetConfigRopPipeline:
         "failing_function,error_message",
         [
             ("load_config", "Load failed"),
-            ("merge_configs", "Merge failed"),
             ("convert_to_jira_config", "TypeError"),
         ],
     )
@@ -292,19 +297,14 @@ class TestGetConfigRopPipeline:
         self, mock_pipeline_functions, failing_function, error_message
     ):
         # Success scenarios
-        mock_pipeline_functions["load_config"].return_value = success({"config": "data"})
-        mock_pipeline_functions["merge_configs"].return_value = success({"merged": "data"})
+        mock_pipeline_functions["load_config"].return_value = success(D({"config": "data"}))
         mock_pipeline_functions["convert_to_jira_config"].return_value = success(
-            {"merged": "data"}
+            D({"merged": "data"})
         )
 
         # Set up the failure point
         if failing_function == "load_config":
             mock_pipeline_functions["load_config"].return_value = failure(Exception(error_message))
-        elif failing_function == "merge_configs":
-            mock_pipeline_functions["merge_configs"].return_value = failure(
-                Exception(error_message)
-            )
         elif failing_function == "convert_to_jira_config":
             mock_pipeline_functions["convert_to_jira_config"].return_value = failure(
                 Exception(error_message)
@@ -317,11 +317,6 @@ class TestGetConfigRopPipeline:
 
         # Verify short-circuiting: functions after failure should not be called
         if failing_function == "load_config":
-            mock_pipeline_functions["merge_configs"].assert_not_called()
-            mock_pipeline_functions["convert_to_jira_config"].assert_not_called()
-        elif failing_function == "merge_configs":
-            mock_pipeline_functions["load_config"].assert_called_once()
             mock_pipeline_functions["convert_to_jira_config"].assert_not_called()
         elif failing_function == "convert_to_jira_config":
             mock_pipeline_functions["load_config"].assert_called_once()
-            mock_pipeline_functions["merge_configs"].assert_called_once()
